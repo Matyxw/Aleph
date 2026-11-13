@@ -9,20 +9,9 @@ import time
 import uuid
 import zlib
 import base64
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Any, List, Optional
-
-@dataclass
-class SessionCheckpoint:
-    checkpoint_id: str
-    session_id: str
-    step_number: int
-    parent_checkpoint_id: Optional[str]
-    active_rule_ids: List[str]
-    compact_summary: str
-    working_memory_json: str
-    compressed_state_blob: str
-    created_at: float = field(default_factory=time.time)
+from aleph_core.state.store import SessionCheckpoint
 
 class CheckpointManager:
     def __init__(self, store: Any):
@@ -30,6 +19,8 @@ class CheckpointManager:
         self._init_checkpoint_table()
 
     def _init_checkpoint_table(self):
+        if hasattr(self.store, "create_session_checkpoint"):
+            return
         with self.store._connection() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS session_checkpoints (
@@ -55,6 +46,15 @@ class CheckpointManager:
         active_rule_ids: List[str],
         parent_checkpoint_id: Optional[str] = None
     ) -> SessionCheckpoint:
+        if hasattr(self.store, "create_session_checkpoint"):
+            return self.store.create_session_checkpoint(
+                session_id=session_id,
+                step_number=step_number,
+                working_memory=working_memory,
+                compact_summary=compact_summary,
+                active_rule_ids=active_rule_ids,
+                parent_checkpoint_id=parent_checkpoint_id,
+            )
         cid = f"chk_{uuid.uuid4().hex[:12]}"
         mem_str = json.dumps(working_memory, ensure_ascii=False)
         compressed = base64.b64encode(zlib.compress(mem_str.encode("utf-8"))).decode("ascii")
@@ -85,6 +85,8 @@ class CheckpointManager:
         return chk
 
     def load_latest_checkpoint(self, session_id: str) -> Optional[SessionCheckpoint]:
+        if hasattr(self.store, "load_latest_session_checkpoint"):
+            return self.store.load_latest_session_checkpoint(session_id)
         with self.store._connection() as conn:
             row = conn.execute("""
                 SELECT * FROM session_checkpoints
@@ -108,5 +110,5 @@ class CheckpointManager:
 
     @staticmethod
     def restore_memory(checkpoint: SessionCheckpoint) -> Dict[str, Any]:
-        raw_bytes = zlib.decompress(base64.b64decode(checkpoint.compressed_state_blob.encode("ascii")))
-        return json.loads(raw_bytes.decode("utf-8"))
+        from aleph_core.state.store import StateStore
+        return StateStore.restore_checkpoint_memory(checkpoint)

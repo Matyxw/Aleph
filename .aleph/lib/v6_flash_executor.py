@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Módulo: v6_flash_executor.py
-Ruta: C:\\Users\\Lucas cardozo\\.aleph\\lib\\v6_flash_executor.py
+Ruta: .aleph/lib/v6_flash_executor.py
 Propósito: Motor de Ejecución Determinista para Gemini 3.8 Flash (Flash-Optimized Execution Harness).
 Implementa las 7 Leyes de Hierro, el validador de invariantes de código,
 el runner secuencial de paquetes y el generador de reportes deterministas.

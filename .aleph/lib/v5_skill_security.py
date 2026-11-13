@@ -4,7 +4,7 @@
 ALEPH v5 ECOSYSTEM SKILLS: MASTER SECURITY, SANDBOX CONFINEMENT & SUPPLY-CHAIN AUDIT
 ===============================================================================
 Subsistema: El Aleph - Motor de Confinamiento, Cero Confianza y Detección Adversarial
-Ruta: C:\\Users\\Lucas cardozo\\.aleph\\lib\\v5_skill_security.py
+Ruta: .aleph/lib/v5_skill_security.py
 Conforme a especificación: 09_PLAN_SKILL_SECURITY_SANDBOX_AUDIT.md
 
 Capacidades de Grado Militar / Zero-Trust:

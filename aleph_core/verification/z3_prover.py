@@ -1,16 +1,3 @@
-import json
-import math
-import re
-import hashlib
-import time
-import uuid
-import ast
-import base64
-from dataclasses import dataclass, field, asdict
-from typing import List, Dict, Any, Optional, Set, Tuple, Union
-import hashlib
-import uuid
-import re
 """
 aleph_core/verification/z3_prover.py
 Motor de Verificación Formal SMT, Demostrador de Teoremas y Motor de Parches Semánticos AST (v2.5.0).
@@ -21,14 +8,21 @@ Integra:
 4. Verificación de terminación de bucles (@loop_variant / @loop_invariant)
 5. SemanticPatchEngine: Reemplazo quirúrgico en AST con verificación diferencial anti-regresión y fsync atómico
 """
-from dataclasses import dataclass, field
-from enum import Enum
 import ast
+import base64
 import difflib
+import hashlib
 import itertools
+import json
+import math
+import re
 import time
+import uuid
+from dataclasses import dataclass, field, asdict
+from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple, Callable
+from typing import Dict, List, Any, Optional, Set, Tuple, Union, Callable
+
 from aleph_core.verification.ast_smt import ASTContractExtractor, SMTExpressionBuilder, HAS_Z3, z3
 from aleph_core.verification.contracts import requires, ensures, invariant, loop_invariant, loop_variant
 from aleph_core.state.store import StateStore
@@ -115,6 +109,7 @@ class FunctionVCGen(ast.NodeVisitor):
         self.postcondition_strs: List[str] = []
         self.invariant_strs: List[str] = []
         self.return_exprs: List[Tuple[Any, Any]] = []
+        self._contract_warnings: List[str] = []
         self._init_parameters()
 
     def _get_current_var_name(self, name: str) -> str:
@@ -138,9 +133,10 @@ class FunctionVCGen(ast.NodeVisitor):
         for pre_s in pre_strs:
             try:
                 expr = self.builder.parse_expr_string(pre_s, resolver=lambda n: n)
-                self.precondition_exprs.append(expr)
-            except Exception:
-                pass
+                if expr is not None:
+                    self.precondition_exprs.append(expr)
+            except (SyntaxError, NotImplementedError, ValueError) as exc:
+                self._contract_warnings.append(f"Contrato @requires no compilado ({pre_s!r}): {exc}")
         self.postcondition_strs = post_strs
         self.invariant_strs = inv_strs
 
@@ -226,7 +222,7 @@ class FunctionVCGen(ast.NodeVisitor):
             if isinstance(node.value, ast.Name):
                 d_name = node.value.id
                 k_name = node.slice.value
-                has_key_var = self.builder.get_var(f"{d_name}_has_{k_name}")
+                has_key_var = self.builder.get_var(f"{d_name}_has_{k_name}", is_bool=True)
                 safety_pred = (has_key_var == z3.BoolVal(True)) if HAS_Z3 else ("CMP", "==", has_key_var, ("CONST", True))
                 pc = _and_exprs(self.path_conditions)
                 self.goals.append(VerificationGoal(
@@ -346,8 +342,11 @@ class FunctionVCGen(ast.NodeVisitor):
                                 if isinstance(elt, ast.Name):
                                     body_targets.add(elt.id)
 
+        false_const = z3.BoolVal(False) if HAS_Z3 else ("CONST", False)
+        true_const = z3.BoolVal(True) if HAS_Z3 else ("CONST", True)
+
         if cond_vars and not (cond_vars & body_targets):
-            safety_pred = _eq_expr(cond_expr, ("CONST", False))
+            safety_pred = _eq_expr(cond_expr, false_const)
             self.goals.append(VerificationGoal(
                 goal_id=f"loop_term_{node.lineno}_{node.col_offset}",
                 defect_type=SafetyDefectType.LOOP_TERMINATION,
@@ -358,11 +357,11 @@ class FunctionVCGen(ast.NodeVisitor):
             ))
 
         orig_pc = list(self.path_conditions)
-        self.path_conditions.append(_eq_expr(cond_expr, ("CONST", True)))
+        self.path_conditions.append(_eq_expr(cond_expr, true_const))
         for stmt in node.body:
             self.visit(stmt)
         self.path_conditions = list(orig_pc)
-        self.path_conditions.append(_eq_expr(cond_expr, ("CONST", False)))
+        self.path_conditions.append(_eq_expr(cond_expr, false_const))
 
     def visit_For(self, node: ast.For):
         if isinstance(node.target, ast.Name):
@@ -925,23 +924,18 @@ class SemanticPatchEngine:
                     )
                 )
 
-        class FunctionReplacer(ast.NodeTransformer):
-            def __init__(self, fn_name: str, new_node: ast.FunctionDef):
-                self.fn_name = fn_name
-                self.new_node = new_node
-                self.replaced = False
+        target_node: Optional[ast.FunctionDef] = None
+        for node in orig_tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name == target_function_name:
+                target_node = node
+                break
+        if target_node is None:
+            for node in ast.walk(orig_tree):
+                if isinstance(node, ast.FunctionDef) and node.name == target_function_name:
+                    target_node = node
+                    break
 
-            def visit_FunctionDef(self, node: ast.FunctionDef):
-                if node.name == self.fn_name:
-                    self.replaced = True
-                    return self.new_node
-                return node
-
-        replacer = FunctionReplacer(target_function_name, replacement_node)
-        modified_tree = replacer.visit(orig_tree)
-        ast.fix_missing_locations(modified_tree)
-
-        if not replacer.replaced:
+        if target_node is None:
             return SemanticPatchResult(
                 success=False,
                 patched_code="",
@@ -951,7 +945,42 @@ class SemanticPatchEngine:
                 error=f"La función objetivo '{target_function_name}' no existe en el código fuente original."
             )
 
-        patched_code = ast.unparse(modified_tree) + "\n"
+        start_idx = (
+            target_node.decorator_list[0].lineno - 1
+            if getattr(target_node, "decorator_list", None)
+            else target_node.lineno - 1
+        )
+        end_idx = getattr(target_node, "end_lineno", None)
+
+        if end_idx is not None:
+            orig_lines = original_source.splitlines(keepends=True)
+            indent = " " * getattr(target_node, "col_offset", 0)
+            rep_lines = replacement_function_source.strip("\n").splitlines(keepends=True)
+            if indent and rep_lines and not rep_lines[0].startswith(indent):
+                rep_lines = [indent + ln if ln.strip() else ln for ln in rep_lines]
+            if rep_lines and not rep_lines[-1].endswith("\n"):
+                rep_lines[-1] += "\n"
+            patched_code = "".join(orig_lines[:start_idx] + rep_lines + orig_lines[end_idx:])
+            if not patched_code.endswith("\n"):
+                patched_code += "\n"
+            ast.parse(patched_code)
+        else:
+            class FunctionReplacer(ast.NodeTransformer):
+                def __init__(self, fn_name: str, new_node: ast.FunctionDef):
+                    self.fn_name = fn_name
+                    self.new_node = new_node
+                    self.replaced = False
+
+                def visit_FunctionDef(self, node: ast.FunctionDef):
+                    if node.name == self.fn_name:
+                        self.replaced = True
+                        return self.new_node
+                    return node
+
+            replacer = FunctionReplacer(target_function_name, replacement_node)
+            modified_tree = replacer.visit(orig_tree)
+            ast.fix_missing_locations(modified_tree)
+            patched_code = ast.unparse(modified_tree) + "\n"
 
         diff_lines = list(difflib.unified_diff(
             original_source.splitlines(keepends=True),
@@ -3591,7 +3620,7 @@ class SagaVerificationReport:
 
 
 class DistributedSagaCompensatorProver:
-    """
+    r"""
     Demostrador Formal de Sagas Distribuidas, Compensabilidad e Idempotencia (v4.3.0):
     Modela transacciones de larga duración entre microservicios (Saga Pattern).
     Demuestra formalmente tres invariantes críticos de consistencia eventual:
@@ -3685,7 +3714,7 @@ class CircuitBreakerReport:
 
 
 class CircuitBreakerBackoffProver:
-    """
+    r"""
     Verificador de Resiliencia y Mitigación de Tormentas de Reintentos (v4.3.0):
     Demuestra si los bucles de reintento ante fallos de red o APIs remotas cumplen
     con las directrices de estabilidad sistémica de alta concurrencia:
@@ -3990,7 +4019,7 @@ class FailoverProofReport:
 
 
 class HighAvailabilityFailoverProver:
-    """
+    r"""
     Demostrador Formal de Failover de Alta Disponibilidad y Prevención de Split-Brain (v4.5.0):
     Modela la conmutación por error en clústeres replicados (Raft/Paxos/PostgreSQL HA).
     Demuestra tres invariantes críticos de consenso distribuido:
@@ -11489,7 +11518,7 @@ class CrossShardASTMergeAndReproduciblePCCReport:
 
 
 class CrossShardThreeWayASTMergerAndReproduciblePCCProver:
-    """
+    r"""
     Nivel 64 / Tool #72: Integrador Estructural 3-Way AST Multi-Shard (O -> (A, B) -> M),
     Reconciliador de Ramas Diamante sin Colisiones, Verificador de Mutación sobre Deltas Fusionados
     y Demostrador de Builds Deterministas Reproducibles Bit-a-Bit con Certificado PCC Multi-Padre (v7.1.0 - NODE-06 Shard).
@@ -21035,7 +21064,7 @@ class AwwwardsCSSCarouselScrollMarkerCrossDocViewTransitionAndWCAG1413Prover:
 }}
 """
 
-        synthesized_tsx = f"""import React, {{ useState, useEffect, useId }} from "react";
+        synthesized_tsx = rf"""import React, {{ useState, useEffect, useId }} from "react";
 
 // W3C Trusted Types Sovereign Policy Guard (CSP: require-trusted-types-for 'script')
 export function sanitizeTrustedHtml(rawHtml: string): string {{
@@ -22726,7 +22755,7 @@ class AwwwardsPopoverHintContrastColorReact19EffectEventAndWCAGErrorProver:
 }}
 """
 
-        synthesized_tsx = """import React, { useState, useEffect, useId, experimental_useEffectEvent as useEffectEvent } from "react";
+        synthesized_tsx = r"""import React, { useState, useEffect, useId, experimental_useEffectEvent as useEffectEvent } from "react";
 
 export function SovereignAwwwardsPopoverHintAndValidatedForm({
   wsEndpoint = "wss://telemetry.aleph.local/stream",
@@ -23816,7 +23845,7 @@ class AwwwardsExclusiveDetailsHighlightTypedOMWCAG1412Report:
 
 
 class AwwwardsExclusiveAccordionDetailsContentHighlightAPIAndWCAGTextSpacingProver:
-    """
+    r"""
     Level 89 Formal Verifier & Synthesizer (NODE-02 Shard: Frontend UI & Awwwards SotD/SotY — v9.6.0):
     1. WHATWG HTML Exclusive `<details name="...">` & CSS Pseudo-Elements Level 4 `::details-content`:
        Detects third-party JS accordion libraries (`@radix-ui/react-accordion`, `react-accessible-accordion`)
@@ -23937,7 +23966,7 @@ class AwwwardsExclusiveAccordionDetailsContentHighlightAPIAndWCAGTextSpacingProv
                         component_or_selector=target_path,
                         line_number=idx,
                         description=(
-                            "String-concatenated `.style.transform = \`translate...\`` detected without CSS Typed OM "
+                            r"String-concatenated `.style.transform = \`translate...\`` detected without CSS Typed OM "
                             "`attributeStyleMap.set('transform', new CSSTranslate(...))`. String serialization forces "
                             "per-frame CSS parser overhead and garbage collection."
                         ),
@@ -28305,7 +28334,7 @@ class DotAlephSovereignWorldDesignerAndGovernanceGateProver:
     def verify_and_synthesize(
         cls,
         code_or_manifest: str,
-        target_path: str = ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V11.json",
+        target_path: str = ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V33_0.json",
         brand_accent_oklch: str = "oklch(0.68 0.19 265)",
     ) -> DotAlephSovereignWorldDesignerReport:
         t0 = time.perf_counter()
@@ -49942,7 +49971,7 @@ class DeltaDebuggingAndTUFDSSEProverReport:
 
 
 class DeltaDebuggingMinimizerAndTUFDSSEAntiRollbackProver:
-    """
+    r"""
     Nivel 73 (NODE-06 v8.0.0):
     1. Algoritmo ddmin de Andreas Zeller (1-Minimal Failure-Inducing Witness):
        Dado un conjunto de operaciones/entradas C = [c_1, ..., c_n] y el subconjunto
@@ -51699,7 +51728,7 @@ class CHCSpacerAndIETFSdJwtVcReport:
 
 
 class CHCSpacerSummaryAndIETFSdJwtVcProver:
-    """
+    r"""
     Nivel 84 (NODE-06 v9.1.0):
     1. Solver de Cláusulas de Horn con Restricciones No Lineales (CHC / Algoritmo Spacer de
        Komuravelli, Gurfinkel & Chaki, 'SMT-Based Model Checking for Recursive Programs', CAV
@@ -53591,7 +53620,7 @@ class ApRHLRenyiDPAndFIPS203MLKEMReport:
 
 
 class ApRHLRenyiDifferentialPrivacyAndFIPS203MLKEMProver:
-    """
+    r"""
     Nivel 95 (NODE-06 v10.2.0 — Tool MCP #104 — Trilogía Post-Cuántica Completa FIPS 203/204/205):
     1. Verificación Formal de Privacidad Diferencial mediante Lógica de Hoare Relacional
        Probabilística Aproximada (apRHL — Gilles Barthe, Boris Köpf, Federico Olmedo & Santiago
@@ -55565,7 +55594,7 @@ class FarkasPolyhedraAndRFC9530Report:
 
 
 class FarkasLemmaPolyhedralInvariantAndRFC9530DigestProver:
-    """
+    r"""
     Nivel 105 (NODE-06 v11.2.0 — Tool MCP #114):
     1. Verificación de Inclusión de Poliedros Convexos y Síntesis de Invariantes Lineales
        mediante el Lema de Farkas (Michael A. Colón, Sriram Sankaranarayanan & Henny B. Sipma,
@@ -82189,7 +82218,7 @@ class BlockSTMMVMemoryEstimateIncarnationAuditReport:
 
 
 class BlockSTMMVMemoryEstimateMarkerAndIncarnationValidationDAGProver:
-    """Nivel 354 (v21.3.0 — REG-130 | Shard NODE-01):
+    r"""Nivel 354 (v21.3.0 — REG-130 | Shard NODE-01):
     Demostrador formal SOTA 2026 de ejecución paralela especulativa Block-STM /
     ParallelEVM:
     - Conversión de write-sets abortados en marcadores ESTIMATE en MVMemory y
@@ -109327,7 +109356,7 @@ class DiscreteTokenDistributionAndFluctuatingSleepyConsensusAuditReport:
 
 
 class DiscreteTokenDistributionAndFluctuatingSleepyConsensusProver:
-    """
+    r"""
     Nivel 420 (v27.9.0 — 432 MCP Tools | REG-196 | Shard NODE-01):
     Certificador SMT/CEGIS para:
     1. Distribucion Discreta de Tokens para Balanceo de Carga (Token Distribution Revisited)

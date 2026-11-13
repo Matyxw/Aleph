@@ -1,16 +1,20 @@
-from dataclasses import asdict
 #!/usr/bin/env python3
 """
-CLI Unificado de El Aleph v2.0 (Sovereign Agent Harness).
+CLI Unificado de El Aleph v33.0.0 (Sovereign Omega Agent Harness).
 Comandos soportados:
   python3 aleph_cli.py test       -> Ejecuta la batería completa de tests unitarios y formales
-  python3 aleph_cli.py benchmark  -> Ejecuta el benchmark cuantitativo El Aleph v2.0 vs. ECC
+  python3 aleph_cli.py benchmark  -> Ejecuta el benchmark cuantitativo El Aleph v33.0.0 vs. ECC
   python3 aleph_cli.py verify <archivo.py> -> Audita formalmente todas las funciones de un archivo Python
   python3 aleph_cli.py evolve     -> Dispara un ciclo autónomo de automejora Demiurgo
   python3 aleph_cli.py mine-spec <archivo.py> -> Induce y prueba formalmente contratos de funciones
   python3 aleph_cli.py git-gate [dir] -> Compuerta Pre-Commit Soberana de Integridad de Workspace
+  python3 aleph_cli.py mcp-stdio | mcp-serve -> Inicia el servidor MCP JSON-RPC 2.0 sobre stdio
+  python3 aleph_cli.py mcp-http [port] -> Inicia el servidor MCP Streamable HTTP
+  python3 aleph_cli.py bitacora-status | bitacora-search | bitacora-enforce | bitacora-learn | bitacora-export
 """
+import argparse
 import ast
+from dataclasses import asdict
 import json
 import sys
 import unittest
@@ -71,6 +75,14 @@ def cmd_antigravity_always_on(install_user_home: bool = True, start_daemon: bool
             except Exception:
                 pass
 
+    daemon_status = None
+    if start_daemon:
+        try:
+            from aleph_mcp_client import AlephMCPClient
+            daemon_status = AlephMCPClient().ensure_http_daemon()
+        except Exception as exc:
+            daemon_status = {"status": "failed_to_start", "error": str(exc)}
+
     report = {
         "status": "ANTIGRAVITY_ALWAYS_ON_ACTIVE",
         "kernel_version": "33.0.0",
@@ -80,6 +92,7 @@ def cmd_antigravity_always_on(install_user_home: bool = True, start_daemon: bool
         "configured_files": installed_paths,
         "stdio_command": f"{sys.executable or 'python3'} {cli_abs} mcp-stdio",
         "http_daemon_endpoint": "http://127.0.0.1:8765/mcp",
+        "daemon_status": daemon_status,
     }
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
@@ -1006,7 +1019,7 @@ def cmd_awwwards_scrollbars_where_wcag33(path_or_code: str, component_name: str 
     return 0 if rep.passed else 1
 
 
-def cmd_dot_aleph_audit(path_or_code: str, target_path: str = ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V11.json") -> int:
+def cmd_dot_aleph_audit(path_or_code: str, target_path: str = ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V33_0.json") -> int:
     from aleph_core.verification import DotAlephSovereignWorldDesignerAndGovernanceGateProver
     p = Path(path_or_code)
     source = p.read_text(encoding="utf-8") if p.exists() and p.is_file() else path_or_code
@@ -3218,11 +3231,36 @@ if __name__ == "__main__":
     elif cmd == "bitacora-enforce":
         arg = sys.argv[2] if len(sys.argv) > 2 else "SELECT 1;"
         sys.exit(cmd_bitacora_enforce(arg))
-    elif cmd == "bitacora-learn" and len(sys.argv) >= 6:
-        sh = sys.argv[6] if len(sys.argv) > 6 else "MASTER-V33"
-        sys.exit(cmd_bitacora_learn(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sh))
+    elif cmd == "bitacora-learn":
+        raw_args = sys.argv[2:]
+        if any(a.startswith("--") for a in raw_args):
+            p_learn = argparse.ArgumentParser(prog="aleph_cli.py bitacora-learn")
+            p_learn.add_argument("--friction", required=True)
+            p_learn.add_argument("--si", required=True)
+            p_learn.add_argument("--entonces", required=True)
+            p_learn.add_argument("--evitar", required=True)
+            p_learn.add_argument("--shard", default="MASTER-V33")
+            parsed_l = p_learn.parse_args(raw_args)
+            sys.exit(cmd_bitacora_learn(parsed_l.friction, parsed_l.si, parsed_l.entonces, parsed_l.evitar, parsed_l.shard))
+        elif len(raw_args) >= 4:
+            sh = raw_args[4] if len(raw_args) > 4 else "MASTER-V33"
+            sys.exit(cmd_bitacora_learn(raw_args[0], raw_args[1], raw_args[2], raw_args[3], sh))
+        else:
+            print("Uso: aleph_cli.py bitacora-learn --friction ... --si ... --entonces ... --evitar ... [--shard ...]", file=sys.stderr)
+            sys.exit(2)
     elif cmd == "bitacora-export":
-        out_p = sys.argv[2] if len(sys.argv) > 2 else "SparkOS_Bitacora_Reglas_Master_Unified_v33_0_0.csv"
+        raw_args = sys.argv[2:]
+        out_p = "SparkOS_Bitacora_Reglas_Master_Unified_v33_0_0.csv"
+        if "--output" in raw_args:
+            idx = raw_args.index("--output")
+            if idx + 1 < len(raw_args):
+                out_p = raw_args[idx + 1]
+        elif "-o" in raw_args:
+            idx = raw_args.index("-o")
+            if idx + 1 < len(raw_args):
+                out_p = raw_args[idx + 1]
+        elif raw_args:
+            out_p = raw_args[0]
         sys.exit(cmd_bitacora_export(out_p))
     elif cmd in ("omega-self-improve", "self-improve"):
         td = sys.argv[2] if len(sys.argv) > 2 else "Ciclo autónomo DGM + AlphaEvolve + HippoRAG 2 + Titans"
@@ -3237,7 +3275,7 @@ if __name__ == "__main__":
         sys.exit(cmd_verify(sys.argv[2]))
     elif cmd == "evolve":
         sys.exit(cmd_evolve())
-    elif cmd == "mcp-serve":
+    elif cmd in ("mcp-serve", "mcp-stdio"):
         sys.exit(cmd_mcp_serve())
     elif cmd == "mcp-config":
         sys.exit(cmd_mcp_config())
@@ -3449,7 +3487,7 @@ if __name__ == "__main__":
         cn = sys.argv[3] if len(sys.argv) > 3 else "AwwwardsScrollbarsWhereAndWCAG33Stage.tsx"
         sys.exit(cmd_awwwards_scrollbars_where_wcag33(sys.argv[2], cn))
     elif cmd == "dot-aleph-audit" and len(sys.argv) > 2:
-        tp = sys.argv[3] if len(sys.argv) > 3 else ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V11.json"
+        tp = sys.argv[3] if len(sys.argv) > 3 else ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V33_0.json"
         sys.exit(cmd_dot_aleph_audit(sys.argv[2], tp))
     elif cmd == "aead-cswsh-graphql-audit" and len(sys.argv) > 2:
         sys.exit(cmd_aead_cswsh_graphql_audit(sys.argv[2]))

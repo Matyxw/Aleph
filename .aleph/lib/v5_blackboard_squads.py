@@ -2,21 +2,23 @@
 # -*- coding: utf-8 -*-
 """
 El Aleph v5.0 - Blackboard DAG & Squads Role Orchestrator
-Ruta: C:\\Users\\Lucas cardozo\\.aleph\\lib\\v5_blackboard_squads.py
+Ruta: .aleph/lib/v5_blackboard_squads.py
 Doctrina: EL DEMIURGO - Coordinación Determinista, Desacoplamiento de Roles,
            Roles como Funciones Puras, Aislamiento Epistémico y Circuit Breakers.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import ast
 import json
+import shlex
 import hashlib
 import threading
 import subprocess
 from enum import Enum
-from typing import List, Dict, Any, Optional, Literal, Callable, Tuple
+from typing import List, Dict, Any, Optional, Literal, Callable, Tuple, Sequence, Union
 from datetime import datetime, timezone
 # --- Pydantic Dual v1/v2 Compatibility Shim ---
 from pydantic import BaseModel, Field
@@ -872,15 +874,22 @@ class SquadOrchestrator:
         self.tdd_iteration = 0
         self.baseline_tests_passed = 0
 
-    def run_command(self, cmd: str, timeout_sec: int = 45) -> subprocess.CompletedProcess:
-        """Ejecuta un comando en el sandbox del workspace con timeout estricto."""
+    def run_command(self, cmd: Union[str, Sequence[str]], timeout_sec: int = 45) -> subprocess.CompletedProcess:
+        """Ejecuta un comando vectorizado (argv[], shell=False, CWE-78 = 0%) en el sandbox del workspace."""
+        if isinstance(cmd, str):
+            raw_tokens = shlex.split(cmd, posix=(os.name != "nt"))
+            argv = [t[1:-1] if len(t) >= 2 and t[0] == t[-1] and t[0] in ('"', "'") else t for t in raw_tokens]
+        else:
+            argv = [str(part) for part in cmd]
+        if not argv:
+            raise ValueError("El comando a ejecutar no puede estar vacío.")
         return subprocess.run(
-            cmd,
-            shell=True,
+            argv,
+            shell=False,
             cwd=self.workspace_path,
             capture_output=True,
             text=True,
-            timeout=timeout_sec
+            timeout=timeout_sec,
         )
 
     def record_tokens(self, count: int) -> None:

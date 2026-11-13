@@ -68,6 +68,11 @@ class DynamicDAGScheduler:
 
         return waves
 
+    @classmethod
+    def validate_acyclic(cls, nodes: Dict[str, DAGTaskNode]) -> List[List[str]]:
+        """Valida explícitamente que no existan dependencias huérfanas ni ciclos antes de despachar."""
+        return cls.compute_execution_waves(nodes)
+
     def execute_dag(
         self,
         nodes: Dict[str, DAGTaskNode],

@@ -51,7 +51,7 @@ def run_comparative_benchmark() -> Dict[str, Any]:
 
         total_ms = round((time.perf_counter_ns() - t0) / 1_000_000.0, 2)
         return {
-            "aleph_version": "20.9.0",
+            "aleph_version": "33.0.0",
             "formal_verification_accuracy_pct": round((correct_proofs / len(samples)) * 100.0, 1),
             "false_positive_rate_pct": round((false_positives / len(samples)) * 100.0, 1),
             "avg_smt_proof_latency_ms": round(sum(proof_times) / len(proof_times), 3),

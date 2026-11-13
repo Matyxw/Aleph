@@ -7,7 +7,9 @@ import csv
 import hashlib
 import json
 import math
+import os
 import re
+import tempfile
 import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -90,12 +92,14 @@ class AlephOmegaContinualSelfImprovementEngine:
     """
 
     DEFAULT_VAULT_REL_PATH = Path(".aleph/BITACORA_MASTER_VAULT_V33.json")
+    TOKEN_REGEX = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9_:\-\.]{3,}")
 
     STOP_WORDS = {
         "para", "como", "este", "esta", "estos", "estas", "todo", "toda", "todos", "todas",
         "entre", "sobre", "bajo", "ante", "desde", "hasta", "hacia", "donde", "cuando",
         "entonces", "evitar", "regla", "nivel", "tool", "prover", "aleph", "con", "sin",
         "por", "del", "las", "los", "una", "uno", "que", "sea", "son", "fue", "han", "ser",
+        "según", "través", "además", "después", "así", "más", "sólo", "también", "están", "será",
         "and", "the", "for", "with", "from", "into", "that", "this", "are", "was", "were",
     }
 
@@ -115,7 +119,7 @@ class AlephOmegaContinualSelfImprovementEngine:
 
     @classmethod
     def extract_entities_and_terms(cls, text: str) -> List[str]:
-        tokens = re.findall(r"[A-Za-z0-9_:\-\.]{3,}", text)
+        tokens = cls.TOKEN_REGEX.findall(text)
         out: List[str] = []
         seen = set()
         for t in tokens:
@@ -174,7 +178,7 @@ class AlephOmegaContinualSelfImprovementEngine:
             full_text = f"{r.canon_id} {r.reg_id} {r.shard} {r.categoria} {r.friccion} {r.regla_op} {r.proyecto_fuente}"
             raw_tokens = [
                 t.lower().strip(".-_:")
-                for t in re.findall(r"[A-Za-z0-9_:\-\.]{3,}", full_text)
+                for t in self.TOKEN_REGEX.findall(full_text)
                 if len(t.strip(".-_:")) >= 3 and t.lower().strip(".-_:") not in self.STOP_WORDS
             ]
             total_len += max(1, len(raw_tokens))
@@ -388,9 +392,13 @@ class AlephOmegaContinualSelfImprovementEngine:
         )
 
         # Check if an identical rule already exists to avoid duplicate bloat while increasing EWC importance
+        norm_new = full_regla_op.strip().lower()
         for existing in self.rules:
-            if existing.regla_op.strip().lower() == full_regla_op.strip().lower():
+            norm_existing = existing.regla_op.strip().lower()
+            if norm_existing == norm_new:
                 existing.ewc_fisher_importance = round(existing.ewc_fisher_importance + 1.5, 2)
+                if persist_to_disk and self.vault_path:
+                    self.save_vault()
                 return {
                     "status": "CONSOLIDATED_EXISTING_RULE_EWC_BOOSTED",
                     "canon_id": existing.canon_id,
@@ -402,7 +410,13 @@ class AlephOmegaContinualSelfImprovementEngine:
                 }
 
         next_idx = len(self.rules) + 1
-        next_reg_num = 330 + sum(1 for r in self.rules if r.shard == "MASTER-V33")
+        existing_nums = [
+            int(m.group(1))
+            for r in self.rules
+            for m in [re.search(r"REG-(\d+)$", r.reg_id)]
+            if m
+        ]
+        next_reg_num = max([330] + existing_nums) + 1
         reg_id = f"REG-{next_reg_num}"
         prefix = shard.replace("-", "").upper()
         canon_id = f"{prefix}-{reg_id}"
@@ -475,6 +489,14 @@ class AlephOmegaContinualSelfImprovementEngine:
         if "while true:" in lower_code and "break" not in lower_code and "return" not in lower_code:
             violations.append("VIOLATION [NODE01-SMT]: Bucle `while True:` sin variante de terminación ni cota formal (@decreases).")
 
+        try:
+            from aleph_core.security.aegis_shield import AegisShield
+            sec_rep = AegisShield.scan_payload(code_or_plan)
+            for finding in sec_rep.findings:
+                violations.append(f"VIOLATION [{finding.rule_id}]: {finding.description}")
+        except ImportError:
+            pass
+
         chain_ok, merkle_root, _ = self.verify_zero_forgetting_merkle_chain()
         return {
             "gate_passed": len(violations) == 0 and chain_ok,
@@ -501,7 +523,8 @@ class AlephOmegaContinualSelfImprovementEngine:
         6. Zero-Forgetting Merkle Chain Verification (0.0% Catastrophic Forgetting)
         """
         t0 = time.perf_counter()
-        query_ctx = f"{task_description} {observed_friction}".strip()
+        clean_friction = (observed_friction or "").strip()
+        query_ctx = f"{task_description} {clean_friction}".strip()
         top_rules = self.query_hipporag2_ppr(query_ctx, top_k=5)
         surprise_bits, momentum_score = self.compute_titans_epistemic_surprise(query_ctx)
 
@@ -630,7 +653,25 @@ class AlephOmegaContinualSelfImprovementEngine:
             "rules": [r.to_dict() for r in self.rules],
         }
         self.vault_path.parent.mkdir(parents=True, exist_ok=True)
-        self.vault_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        payload = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=".bitacora_vault_",
+            suffix=".tmp",
+            dir=str(self.vault_path.parent),
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as tmp_f:
+                tmp_f.write(payload)
+                tmp_f.flush()
+                os.fsync(tmp_f.fileno())
+            os.replace(tmp_name, self.vault_path)
+        except Exception:
+            if os.path.exists(tmp_name):
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
+            raise
 
     def export_to_csv(self, output_csv_path: Path) -> Path:
         output_csv_path = Path(output_csv_path)

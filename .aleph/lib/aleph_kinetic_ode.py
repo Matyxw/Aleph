@@ -78,9 +78,7 @@ class SpringPhysicsODE(BaseModel):
     Forma estándar:
         x''(t) + 2 * zeta * omega_0 * x'(t) + omega_0^2 * x(t) = 0
     """
-    class Config:
-        extra = "forbid"
-        frozen = True
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     mass: float = Field(default=1.0, gt=0.0, description="Masa del objeto interactivo m (kg o unidades normalizadas)")
     stiffness: float = Field(default=100.0, gt=0.0, description="Constante elástica del resorte k (N/m)")
@@ -509,9 +507,7 @@ class FeedbackType(str, enum.Enum):
 
 class StateVisualProps(BaseModel):
     """Propiedades visuales, cinéticas y sensoriales de un estado interactivo."""
-    class Config:
-        extra = "forbid"
-        frozen = True
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     state: InteractionState
     feedback_type: Optional[FeedbackType] = None
@@ -538,9 +534,7 @@ class InteractionStateMatrix(BaseModel):
     Garantiza que toda entidad interactiva contemple exhaustivamente los 7 estados
     y soporte variantes causales de SUCCESS y ERROR en FEEDBACK.
     """
-    class Config:
-        extra = "forbid"
-        frozen = True
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     states: Dict[InteractionState, StateVisualProps] = Field(default_factory=dict)
     feedback_variants: Dict[FeedbackType, StateVisualProps] = Field(default_factory=dict)
@@ -889,9 +883,7 @@ class InteractionStateMatrix(BaseModel):
 
 class SemanticAuditIssue(BaseModel):
     """Reporte de infracción semántica o de rendimiento interactivo."""
-    class Config:
-        extra = "forbid"
-        frozen = True
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     rule_id: str
     message: str

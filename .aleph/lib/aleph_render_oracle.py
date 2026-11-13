@@ -20,6 +20,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -161,6 +162,39 @@ class LivePlaywrightOracle:
         else:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             self.runner_script = os.path.join(base_dir, "scripts", "playwright_layout_runner.mjs")
+
+    @staticmethod
+    def is_available(runner_script: Optional[str] = None) -> Tuple[bool, str]:
+        """Verifica si Node.js, Playwright y Chromium headless están disponibles en el entorno."""
+        node_bin = shutil.which("node")
+        if not node_bin:
+            return (False, "Binario 'node' no disponible en PATH")
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        script = os.path.abspath(runner_script) if runner_script else os.path.join(
+            base_dir, "scripts", "playwright_layout_runner.mjs"
+        )
+        if not os.path.isfile(script):
+            return (False, f"Runner Playwright no encontrado: {script}")
+        probe = (
+            "import('playwright')"
+            ".then(async (p) => { const fs = await import('fs'); "
+            "process.exit(fs.existsSync(p.chromium.executablePath()) ? 0 : 2); })"
+            ".catch(() => process.exit(3));"
+        )
+        try:
+            res = subprocess.run(
+                [node_bin, "-e", probe],
+                cwd=os.path.dirname(os.path.dirname(script)),
+                capture_output=True,
+                text=True,
+                timeout=8.0,
+                check=False,
+            )
+        except Exception as exc:
+            return (False, f"Fallo verificando Playwright/Chromium: {exc}")
+        if res.returncode != 0:
+            return (False, f"Playwright/Chromium no disponible en el entorno local (exit={res.returncode})")
+        return (True, "")
 
     def audit_live_rendered_html(
         self,

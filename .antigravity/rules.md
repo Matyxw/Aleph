@@ -4,7 +4,7 @@
 Este workspace está gobernado en tiempo real por **El Aleph v33.0.0 Sovereign Master Kernel** (Unificación Total de los 6 Nodos Federados `NODE-01`..`NODE-06` + Bóveda Activa `.aleph` World Designer V7).
 - **Servidor MCP Activo**: `el-aleph-sovereign` (`python3 aleph_cli.py mcp-stdio` y Daemon HTTP Streamable en `http://127.0.0.1:8765/mcp`).
 - **730 Herramientas Formales MCP JSON-RPC 2.0**: Disponibles con `trust: true` y `alwaysAllow: ["*"]`.
-- **1,580 Clases Formales Prover/Report (`z3_prover.py`)** y **1,244 Tests Formales (100.0% Pass Rate, 0.0% FPR)**.
+- **1,580 Clases Formales Prover/Report (`z3_prover.py`)** y **1,248 Tests Formales (100.0% Pass Rate, 0.0% FPR)**.
 
 ## 2. Compuertas Obligatorias por Dominio en Google Antigravity
 1. **Antes de escribir o parchear código Python/Rust/TS/SQL (`NODE-01` & `NODE-06`)**:
@@ -16,4 +16,4 @@ Este workspace está gobernado en tiempo real por **El Aleph v33.0.0 Sovereign M
 4. **Antes de exponer endpoints, autenticación, criptografía o agentes (`NODE-04`)**:
    - Invocar `aleph_audit_taint`, `aleph_prove_spark6066_flink_cve2020_17518_airflow_cve2020_11978_and_cursor_cve2026_26268_rce` y compuertas PQC/OAuth/SSRF.
 5. **Para navegación de repositorio a gran escala, compresión KV y verificación Lean/Verus/Dafny (`NODE-05`)**:
-   - Invocar `aleph_rank_repo_pagerank` y los motores полиglot de PageRank y KV-Cache.
+   - Invocar `aleph_rank_repo_pagerank` y los motores políglotas de PageRank y KV-Cache.

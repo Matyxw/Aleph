@@ -3,7 +3,7 @@
 """
 =============================================================================
 Suite de Pruebas Formales: El Aleph v4.0 Super-Swarm 1,000+ DAG-BFT Engine
-Ruta: C:\\Users\\Lucas cardozo\\.aleph\\tests\\test_v4_super_swarm_bft.py
+Ruta: .aleph/tests/test_v4_super_swarm_bft.py
 Doctrina: EL DEMIURGO - 100% Tests Verificados y Cero Margen de Error
 =============================================================================
 """
@@ -11,10 +11,18 @@ Doctrina: EL DEMIURGO - 100% Tests Verificados y Cero Margen de Error
 import sys
 import math
 from pathlib import Path
-import pytest
+try:
+    import pytest
+    _raises = pytest.raises
+except ImportError:
+    import unittest as _unittest
+    _tc = _unittest.TestCase()
 
-# Asegurar path a .aleph
-ALEPH_ROOT = Path("C:/Users/Lucas cardozo/.aleph")
+    def _raises(exc_type, match=None):  # type: ignore[misc]
+        return _tc.assertRaisesRegex(exc_type, match) if match else _tc.assertRaises(exc_type)
+
+# Asegurar path portable a .aleph
+ALEPH_ROOT = Path(__file__).resolve().parent.parent
 if str(ALEPH_ROOT) not in sys.path:
     sys.path.insert(0, str(ALEPH_ROOT))
 
@@ -89,7 +97,7 @@ class TestUslTelemetryEngine:
         engine = UslEngine()
         engine.record_sample(10.0, 9.5)
         engine.record_sample(20.0, 18.2)
-        with pytest.raises(ValueError, match="al menos 3 muestras"):
+        with _raises(ValueError, match="al menos 3 muestras"):
             engine.fit_parameters()
 
 
@@ -319,7 +327,7 @@ class TestNarwhalBullsharkConsensus:
         corrupted_v = NarwhalVertex(origin=0, round=2, batch_digest="bad", previous_certs=("only_one",))
         corrupted_c = NarwhalCertificate(vertex=corrupted_v, signatures=(0, 1, 2))
 
-        with pytest.raises(ValueError, match="Quórum causal insuficiente"):
+        with _raises(ValueError, match="Quórum causal insuficiente"):
             engine.insert_certificate(corrupted_c)
 
 

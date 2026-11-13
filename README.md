@@ -8,11 +8,11 @@ Kernel formal soberano unificado de **El Aleph v33.0.0**, que fusiona sin pérdi
 | :--- | :--- |
 | **Versión Unificada** | `v33.0.0` (`REG-330` / Nivel Formal `506`) |
 | **Reglas Compiladas Nativamente Dentro de El Aleph** | **350 reglas** (`BASE`: 51, `NODE-01`: 122, `NODE-02`: 3, `NODE-03`: 6, `NODE-04`: 1, `NODE-05`: 52, `NODE-06`: 113, `MASTER-V32`: 1, `MASTER-V33`: 1) |
-| **Entidades del Grafo de Conocimiento (HippoRAG 2)** | **4.742 entidades** indexadas con Personalized PageRank (`alpha = 0.15`) + Okapi BM25 |
+| **Entidades del Grafo de Conocimiento (HippoRAG 2)** | **5.118 entidades** indexadas con Personalized PageRank (`alpha = 0.15`) + Okapi BM25 |
 | **Tasa de Olvido Catastrófico (Catastrophic Forgetting)** | **0.0%** (Bóveda Append-Only con Cadena Merkle SHA-256 + Pesos EWC Fisher >= 1.0) |
 | **Clases y Motores Formales en `z3_prover.py`** | **1.580 clases** (`520+` Provers Formales SMT/CEGIS) |
 | **Herramientas MCP JSON-RPC 2.0 Activas** | **730 herramientas** (`#725`..`#730` dedicadas a la Bitácora interna y automejora continua Omega) |
-| **Suite de Pruebas Formales y Unitarias** | **1.247 / 1.247 tests OK** (`100.0%` Pass Rate, `0.0%` Falsos Positivos) |
+| **Suite de Pruebas Formales y Unitarias** | **1.248 / 1.248 tests OK** (`100.0%` Pass Rate, `0.0%` Falsos Positivos) |
 
 ## 2. Los 8 Pilares SOTA del Motor de Automejora Continua Sin Olvido (`aleph_core/self_improvement/`)
 
@@ -28,7 +28,7 @@ Kernel formal soberano unificado de **El Aleph v33.0.0**, que fusiona sin pérdi
 ## 3. Comandos CLI de la Bitácora Nativa y Automejora Continua
 
 ```bash
-# Ejecutar las 1.247 pruebas formales y unitarias
+# Ejecutar las 1.248 pruebas formales y unitarias
 python3 aleph_cli.py test
 
 # Ver estado de la Bóveda Interna de Bitácora (350 reglas, raíz Merkle, 0.0% olvido)

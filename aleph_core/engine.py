@@ -1,3 +1,17 @@
+"""
+Motor Central El Aleph v33.0.0 (Sovereign Omega Orchestrator).
+Integra en un único Kernel determinista:
+1. Estado Atómico SQLite WAL (StateStore) con Checkpointing Jerárquico
+2. Caché Semántica Exacta + Normalización AST (Zero-Token Cache Hit)
+3. Diarios Inmutables con Cadena SHA-256 (AgentJournal)
+4. Memoria Bicameral Algorítmica + Grafo de Conocimiento (BicameralMemory)
+5. Pipeline de Hooks Pre/Post Ejecución y Escudo AegisShield (HookPipeline + AegisShield)
+6. Enrutador de Contratos + Cost Router Soberano ($0.00 en Gemini 4 Argon)
+7. Planificador Concurrente de Grafos Acíclicos Dirigidos (DynamicDAGScheduler)
+8. Compuerta Epistémica Triple (Z3/Symbolic Prover -> PBT Fallback -> Empirical Gate)
+9. Motor de Parches Semánticos AST con Verificación Diferencial Anti-Regresión (SemanticPatchEngine)
+10. Enjambre de Auditoría (WarCouncilSwarm) y Ciclo de Automejora Continua (DemiurgoEvolutionEngine + HippoRAG 2 + Titans)
+"""
 from aleph_core.verification.z3_prover import BambooRetiredLockEarlyReleaseCommitBarrierAndRococoDeferredPieceDAGProver
 from aleph_core.verification.z3_prover import TicTocDataDrivenTimestampIntervalExtensionAndCicadaContentionAwareMVCCDAGProver
 from aleph_core.verification.z3_prover import CaracalBatchAppendHotspotPieceSplittingAndBohmPlaceholderMVCCDAGProver
@@ -20,25 +34,12 @@ from aleph_core.verification.z3_prover import ContextCarryingActionIntentEpochFe
 from aleph_core.verification.z3_prover import SpeculativeWaveReadWriteConflictMVMemoryAndCausalEdgeSynthesizerProver
 from aleph_core.verification.z3_prover import PG18BTreeDeduplicationPostingListCompressionSupabaseRlsRealtimePresenceStateQuotaGuardAndZeroDowntimeColumnNotNullCheckValidationProver
 from aleph_core.verification.z3_prover import PG18LogicalSlotFailoverSynchronizationSupabaseRlsMultiTenantWebhookReplayDefenseAndZeroDowntimeTablePartitionSplitMergeProver
-"""
-Motor Central El Aleph v2.6.0 (Sovereign Orchestrator).
-Integra en un único Kernel determinista:
-1. Estado Atómico SQLite WAL (StateStore) con Checkpointing Jerárquico
-2. Caché Semántica Exacta + Normalización AST (Zero-Token Cache Hit)
-3. Diarios Inmutables con Cadena SHA-256 (AgentJournal)
-4. Memoria Bicameral Algorítmica + Grafo de Conocimiento (BicameralMemory)
-5. Pipeline de Hooks Pre/Post Ejecución y Escudo AegisShield (HookPipeline + AegisShield)
-6. Enrutador de Contratos + Cost Router Soberano ($0.00 en Gemini 4 Argon)
-7. Planificador Concurrente de Grafos Acíclicos Dirigidos (DynamicDAGScheduler)
-8. Compuerta Epistémica Triple (Z3/Symbolic Prover -> PBT Fallback -> Empirical Gate)
-9. Motor de Parches Semánticos AST con Verificación Diferencial Anti-Regresión (SemanticPatchEngine)
-10. Enjambre de Auditoría (WarCouncilSwarm) y Ciclo de Automejora Continua (DemiurgoEvolutionEngine)
-"""
 import ast
+import threading
 import uuid
 import time
 from pathlib import Path
-from typing import Dict, Any, Callable, Optional, List
+from typing import Dict, Any, Callable, Optional, List, Tuple
 from aleph_core.config import DB_PATH, JOURNALS_DIR
 from aleph_core.state.store import StateStore, SessionCheckpoint, CachedTaskResult
 from aleph_core.state.epistemic import EpistemicClaim, EpistemicStatus, VerificationGate
@@ -141,11 +142,38 @@ from aleph_core.verification.z3_prover import (
 )
 from aleph_core.verification.z3_prover import SemanticPatchEngine, SemanticPatchResult, CEGISRepairEngine, CEGISRepairResult, Z3VerificationEngine, ProgramDependencySlicer, SliceAndComplexityReport, PolyglotContractVerifier, PolyglotAuditResult
 
+_SHARED_OMEGA_LOCK = threading.Lock()
+_SHARED_OMEGA_CACHE: Dict[str, Tuple[int, Any]] = {}
+
+
+def get_shared_omega_engine(vault_path: Optional[Path] = None) -> Any:
+    """Devuelve el singleton cacheado de AlephOmegaContinualSelfImprovementEngine (invalidado por st_mtime_ns)."""
+    from aleph_core.self_improvement import AlephOmegaContinualSelfImprovementEngine
+    base_dir = Path(__file__).resolve().parent.parent
+    resolved = (Path(vault_path) if vault_path else (base_dir / AlephOmegaContinualSelfImprovementEngine.DEFAULT_VAULT_REL_PATH)).resolve()
+    key = str(resolved)
+    mtime_ns = resolved.stat().st_mtime_ns if resolved.exists() else -1
+    with _SHARED_OMEGA_LOCK:
+        cached = _SHARED_OMEGA_CACHE.get(key)
+        if cached is not None and cached[0] == mtime_ns:
+            return cached[1]
+        eng = AlephOmegaContinualSelfImprovementEngine(vault_path=resolved)
+        new_mtime_ns = resolved.stat().st_mtime_ns if resolved.exists() else -1
+        _SHARED_OMEGA_CACHE[key] = (new_mtime_ns, eng)
+        return eng
+
+
 class AlephEngine:
     def __init__(self, engine_id: str = "aleph_sovereign_v2", db_path=DB_PATH):
         self.engine_id = engine_id
         self.state_store = StateStore(db_path=db_path)
-        self.journal = AgentJournal(agent_id=engine_id)
+        db_p = Path(db_path).resolve()
+        custom_journals_dir = (
+            (db_p.parent / "journals")
+            if db_p != Path(DB_PATH).resolve()
+            else JOURNALS_DIR
+        )
+        self.journal = AgentJournal(agent_id=engine_id, base_dir=custom_journals_dir)
         self.memory = BicameralMemory(store=self.state_store)
         self.dispatcher = TaskDispatcher()
         self.cost_router = SovereignCostRouter()
@@ -1011,8 +1039,7 @@ class AlephEngine:
         shard_filter: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Consulta las 350+ reglas internas de la Bitácora mediante HippoRAG 2 Personalized PageRank + BM25."""
-        from aleph_core.self_improvement import AlephOmegaContinualSelfImprovementEngine
-        omega = AlephOmegaContinualSelfImprovementEngine()
+        omega = get_shared_omega_engine()
         matches = omega.query_hipporag2_ppr(query=query, top_k=top_k, shard_filter=shard_filter)
         return {
             "status": "OK",
@@ -1028,8 +1055,7 @@ class AlephEngine:
         top_k: int = 6,
     ) -> Dict[str, Any]:
         """Audita un plan o código contra las 350+ reglas internas de la Bitácora antes de ejecutar."""
-        from aleph_core.self_improvement import AlephOmegaContinualSelfImprovementEngine
-        omega = AlephOmegaContinualSelfImprovementEngine()
+        omega = get_shared_omega_engine()
         return omega.enforce_pre_turn_bitacora_gate(code_or_plan=code_or_plan, top_k=top_k)
 
     def learn_new_experiential_bitacora_rule(
@@ -1042,8 +1068,7 @@ class AlephEngine:
         persist_to_disk: bool = False,
     ) -> Dict[str, Any]:
         """Aprende y consolida una nueva regla en la Bitácora interna bajo bloqueo Merkle SHA-256 sin olvido."""
-        from aleph_core.self_improvement import AlephOmegaContinualSelfImprovementEngine
-        omega = AlephOmegaContinualSelfImprovementEngine()
+        omega = get_shared_omega_engine()
         return omega.learn_experiential_rule(
             friction_or_error=friction_or_error,
             si_clause=si_clause,
@@ -1060,8 +1085,7 @@ class AlephEngine:
         persist_new_rule: bool = False,
     ) -> Dict[str, Any]:
         """Ejecuta el ciclo completo de automejora continua DGM + AlphaEvolve + TextGrad + Titans + HippoRAG 2."""
-        from aleph_core.self_improvement import AlephOmegaContinualSelfImprovementEngine
-        omega = AlephOmegaContinualSelfImprovementEngine()
+        omega = get_shared_omega_engine()
         return omega.run_omega_self_improvement_cycle(
             task_description=task_description,
             observed_friction=observed_friction,
@@ -1070,8 +1094,7 @@ class AlephEngine:
 
     def get_internal_bitacora_vault_telemetry(self) -> Dict[str, Any]:
         """Devuelve la telemetría completa de la Bóveda Nativa de Bitácora y su cadena Merkle anti-olvido."""
-        from aleph_core.self_improvement import AlephOmegaContinualSelfImprovementEngine
-        omega = AlephOmegaContinualSelfImprovementEngine()
+        omega = get_shared_omega_engine()
         return omega.get_vault_telemetry()
 
 
@@ -16507,8 +16530,7 @@ class AlephUniversalMCPServer:
                 simulate_tamper_or_forgetting=bool(args.get("simulate_tamper_or_forgetting", False)),
             ).to_dict()
         elif tool_name == "aleph_bitacora_query_hipporag2_ppr":
-            from .self_improvement import AlephOmegaContinualSelfImprovementEngine
-            eng_omega = AlephOmegaContinualSelfImprovementEngine()
+            eng_omega = get_shared_omega_engine()
             return {
                 "status": "OK",
                 "total_vault_rules": len(eng_omega.rules),
@@ -16519,15 +16541,13 @@ class AlephUniversalMCPServer:
                 ),
             }
         elif tool_name == "aleph_bitacora_enforce_pre_turn_gate":
-            from .self_improvement import AlephOmegaContinualSelfImprovementEngine
-            eng_omega = AlephOmegaContinualSelfImprovementEngine()
+            eng_omega = get_shared_omega_engine()
             return eng_omega.enforce_rules_on_code_or_plan(
                 code_or_plan=str(args.get("code_or_plan", "")),
                 top_k=int(args.get("top_k", 10)),
             )
         elif tool_name == "aleph_bitacora_learn_experiential_rule":
-            from .self_improvement import AlephOmegaContinualSelfImprovementEngine
-            eng_omega = AlephOmegaContinualSelfImprovementEngine()
+            eng_omega = get_shared_omega_engine()
             return eng_omega.learn_experiential_rule(
                 friction_or_error=str(args.get("friction_or_error", "")),
                 si_clause=str(args.get("si_clause", "")),
@@ -16537,16 +16557,14 @@ class AlephUniversalMCPServer:
                 persist_to_disk=bool(args.get("persist_to_disk", False)),
             )
         elif tool_name == "aleph_omega_dgm_alphaevolve_self_improve":
-            from .self_improvement import AlephOmegaContinualSelfImprovementEngine
-            eng_omega = AlephOmegaContinualSelfImprovementEngine()
+            eng_omega = get_shared_omega_engine()
             return eng_omega.run_omega_self_improvement_cycle(
                 task_description=str(args.get("task_description", "Ciclo de automejora continua El Aleph v33.0.0")),
-                observed_friction=args.get("observed_friction"),
+                observed_friction=args.get("observed_friction") or "",
                 persist_new_rule=bool(args.get("persist_new_rule", False)),
             ).to_dict()
         elif tool_name == "aleph_bitacora_vault_status_and_telemetry":
-            from .self_improvement import AlephOmegaContinualSelfImprovementEngine
-            eng_omega = AlephOmegaContinualSelfImprovementEngine()
+            eng_omega = get_shared_omega_engine()
             chain_ok, merkle_root, violations = eng_omega.verify_zero_forgetting_merkle_chain()
             return {
                 "status": "OK" if chain_ok else "TAMPER_DETECTED",
@@ -16646,8 +16664,22 @@ class AlephUniversalMCPServer:
         import secrets
         import time
         import urllib.parse
-        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
         mcp_instance = self
+        max_http_body_bytes = 10 * 1024 * 1024
+        allowed_hosts = {"127.0.0.1", "localhost", "::1", "gemini.google.com", "aistudio.google.com", "oauth-redirect.googleusercontent.com", "oauth-redirect-sandbox.googleusercontent.com", "oauth-redirect-test.googleusercontent.com"}
+
+        def _is_allowed_uri(uri_str: str) -> bool:
+            try:
+                p = urllib.parse.urlparse(uri_str)
+            except Exception:
+                return False
+            if p.scheme not in ("http", "https") or not p.hostname:
+                return False
+            hn = p.hostname.lower()
+            if p.scheme == "http" and hn not in ("127.0.0.1", "localhost", "::1"):
+                return False
+            return hn in allowed_hosts or hn.endswith(".googleusercontent.com")
 
         class MCPHTTPHandler(BaseHTTPRequestHandler):
             def _base_url(self) -> str:
@@ -16655,11 +16687,23 @@ class AlephUniversalMCPServer:
                 host_hdr = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or f"{host}:{port}"
                 return f"{proto}://{host_hdr}"
 
+            def _allowed_origin(self) -> str:
+                origin = self.headers.get("Origin", "")
+                if origin:
+                    try:
+                        p = urllib.parse.urlparse(origin)
+                        if p.hostname and (p.hostname.lower() in allowed_hosts or p.hostname.lower().endswith(".googleusercontent.com")):
+                            return origin
+                    except Exception:
+                        pass
+                return f"http://{host}:{port}"
+
             def _send_json(self, status_code: int, payload: Dict[str, Any]):
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(status_code)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Origin", self._allowed_origin())
+                self.send_header("Vary", "Origin")
                 self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, MCP-Protocol-Version")
                 self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
                 self.send_header("MCP-Protocol-Version", "2025-06-18")
@@ -16716,6 +16760,9 @@ class AlephUniversalMCPServer:
                     state = qs.get("state", [""])[0]
                     code = f"aleph_auth_{secrets.token_urlsafe(16)}"
                     if redirect_uri:
+                        if not _is_allowed_uri(redirect_uri):
+                            self._send_json(400, {"error": "invalid_redirect_uri", "message": "redirect_uri fuera de lista blanca OAuth"})
+                            return
                         sep = "&" if "?" in redirect_uri else "?"
                         target = f"{redirect_uri}{sep}code={urllib.parse.quote(code)}"
                         if state:
@@ -16731,7 +16778,17 @@ class AlephUniversalMCPServer:
             def do_POST(self):
                 parsed = urllib.parse.urlparse(self.path)
                 path = parsed.path
-                length = int(self.headers.get("Content-Length", 0))
+                try:
+                    length = int(self.headers.get("Content-Length", 0))
+                except ValueError:
+                    self._send_json(400, {"error": "invalid_content_length"})
+                    return
+                if length < 0:
+                    self._send_json(400, {"error": "invalid_content_length"})
+                    return
+                if length > max_http_body_bytes:
+                    self._send_json(413, {"error": "payload_too_large", "max_bytes": max_http_body_bytes})
+                    return
                 raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
 
                 if path == "/oauth/register":
@@ -16740,12 +16797,14 @@ class AlephUniversalMCPServer:
                     except Exception:
                         req_data = {}
                     client_id = f"dyn_aleph_{secrets.token_hex(8)}"
-                    redirect_uris = req_data.get("redirect_uris", [
+                    default_redirects = [
                         "https://gemini.google.com/oauth-redirect",
                         "https://oauth-redirect.googleusercontent.com",
                         "https://oauth-redirect-sandbox.googleusercontent.com",
                         "https://oauth-redirect-test.googleusercontent.com",
-                    ])
+                    ]
+                    raw_redirects = req_data.get("redirect_uris", default_redirects)
+                    redirect_uris = [u for u in raw_redirects if isinstance(u, str) and _is_allowed_uri(u)] or default_redirects
                     self._send_json(201, {
                         "client_id": client_id,
                         "client_id_issued_at": int(time.time()),
@@ -16773,5 +16832,5 @@ class AlephUniversalMCPServer:
             def log_message(self, format, *args):
                 return
 
-        httpd = HTTPServer((host, port), MCPHTTPHandler)
+        httpd = ThreadingHTTPServer((host, port), MCPHTTPHandler)
         httpd.serve_forever()

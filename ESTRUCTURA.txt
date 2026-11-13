@@ -1,15 +1,13 @@
 ================================================================================
 ESTRUCTURA CANÓNICA DE EL ALEPH v33.0.0 (SOVEREIGN OMEGA + .ALEPH)
-Total de archivos del repositorio limpio: 119
-Clases Formales: 1,580 | Herramientas MCP: 730 | Reglas Bitácora: 350
+Total de archivos del repositorio limpio: 121
+Reglas Bitácora: 350 | Entidades KG: 5,118 | Tests Core: 1,248 | Suite .aleph: 106
 ================================================================================
 
   - .aleph/.windsurfrules
   - .aleph/ALEPH_SOVEREIGN_WORLD_DESIGNER_MASTER_PLAN_V7.md
   - .aleph/BITACORA_MASTER_VAULT_V33.json
   - .aleph/CLAUDE.md
-  - .aleph/UNIFIED_GOVERNANCE_MANIFEST_V11.json
-  - .aleph/UNIFIED_GOVERNANCE_MANIFEST_V32_0.json
   - .aleph/UNIFIED_GOVERNANCE_MANIFEST_V33_0.json
   - .aleph/ecosystem_skills_plan_v5/10_PLAN_SOVEREIGN_ALEPH_ECOSYSTEM_SYNTHESIS.md
   - .aleph/hooks/aleph_antigravity_omega_hook.py
@@ -56,12 +54,14 @@ Clases Formales: 1,580 | Herramientas MCP: 730 | Reglas Bitácora: 350
   - .aleph/scripts/playwright_layout_runner.mjs
   - .aleph/scripts/scan_cleanliness.py
   - .aleph/scripts/swarm_governor_50.py
+  - .aleph/tests/conftest.py
   - .aleph/tests/test_aleph_live_oracle.py
   - .aleph/tests/test_aleph_v7_interaction.py
   - .aleph/tests/test_aleph_visual_stage_synthesizer.py
   - .aleph/tests/test_dot_aleph_suite.py
   - .aleph/tests/test_swarm_governor_50.py
   - .aleph/tests/test_v4_super_swarm_bft.py
+  - .aleph/v4_engine/__init__.py
   - .aleph/v4_engine/aep_protocol.py
   - .aleph/v4_engine/causal_world_model.py
   - .aleph/v4_engine/holographic_causal_memory.py
@@ -71,6 +71,7 @@ Clases Formales: 1,580 | Herramientas MCP: 730 | Reglas Bitácora: 350
   - .antigravity/rules.md
   - .antigravity/settings.json
   - .gemini/settings.json
+  - .github/workflows/ci.yml
   - .gitignore
   - .idx/dev.nix
   - .mcp.json
@@ -122,4 +123,5 @@ Clases Formales: 1,580 | Herramientas MCP: 730 | Reglas Bitácora: 350
   - aleph_core/verification/semantic_patch.py
   - aleph_core/verification/z3_prover.py
   - aleph_mcp_client.py
+  - pyproject.toml
   - requirements.txt

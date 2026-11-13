@@ -17,6 +17,7 @@ import zlib
 import base64
 import uuid
 import hashlib
+import tempfile
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 from dataclasses import dataclass, field
@@ -269,13 +270,23 @@ class StateStore:
     @staticmethod
     def atomic_write_file(target_path: Path, content: str) -> None:
         target_path = Path(target_path)
-        temp_path = target_path.with_suffix(target_path.suffix + f".tmp_{int(time.time()*1000)}_{os.getpid()}")
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(temp_path, "w", encoding="utf-8") as f:
-            f.write(content)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_path, target_path)
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(target_path.parent),
+            prefix=f".{target_path.name}.",
+            suffix=".tmp",
+        )
+        temp_path = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, target_path)
+        except BaseException:
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
 
     # Métodos nativos de Checkpointing Jerárquico y Compresión Contextual
     def create_session_checkpoint(

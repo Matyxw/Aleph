@@ -7248,7 +7248,8 @@ export function FlawedModalBg() {
         self.assertIn("checkpoint-action", err_msg)
 
         safe_p = AgenticToolArgumentInjectionAndSandboxEscapeProver.secure_sandbox_resolve("/tmp/sandbox", "nested/file.txt")
-        self.assertEqual(str(safe_p), "/tmp/sandbox/nested/file.txt")
+        from pathlib import Path as _SafePath
+        self.assertEqual(safe_p.resolve(), (_SafePath("/tmp/sandbox") / "nested/file.txt").resolve())
         
         with self.assertRaises(PermissionError):
             AgenticToolArgumentInjectionAndSandboxEscapeProver.secure_sandbox_resolve("/tmp/sandbox", "../../etc/shadow")
@@ -34401,6 +34402,32 @@ def legacy_unresponsive_ba_and_underbudgeted_qd_adversary():
             })
             self.assertIn("result", resp, f"Fallo en herramienta MCP {tool_name}: {resp}")
             self.assertFalse(resp["result"].get("isError", False))
+
+    def test_level_506_bitacora_all_350_rules_complete_clauses_and_unicode_entities(self):
+        """Nivel 506 (v33.0.0 — Regresión Bitácora): Valida cláusulas completas, cero clones, Unicode e integridad Merkle."""
+        from aleph_core.engine import get_shared_omega_engine
+
+        engine = get_shared_omega_engine()
+        self.assertGreaterEqual(len(engine.rules), 350)
+
+        valid_merkle, root_hash, violations = engine.verify_zero_forgetting_merkle_chain()
+        self.assertTrue(valid_merkle, f"Cadena Merkle inválida: {violations}")
+        self.assertTrue(len(root_hash) == 64)
+        self.assertEqual(len(violations), 0)
+
+        for rule in engine.rules:
+            self.assertGreaterEqual(len(rule.si_clause.strip()), 10, f"si_clause corta en {rule.canon_id}")
+            self.assertGreaterEqual(len(rule.entonces_clause.strip()), 10, f"entonces_clause corta en {rule.canon_id}")
+            self.assertGreaterEqual(len(rule.evitar_clause.strip()), 10, f"evitar_clause corta en {rule.canon_id}")
+            self.assertNotEqual(rule.friccion.strip(), rule.proyecto_fuente.strip(), f"friccion == proyecto_fuente en {rule.canon_id}")
+
+        unique_regla_op = {rule.regla_op.strip().lower() for rule in engine.rules}
+        self.assertEqual(len(unique_regla_op), len(engine.rules), "Se detectaron reglas clonadas en Bitácora")
+
+        self.assertIn("asignación", engine.entity_to_rules)
+        self.assertIn("análisis", engine.entity_to_rules)
+        unicode_hits = engine.query_hipporag2_ppr("asignación pérdida análisis", top_k=5)
+        self.assertGreater(len(unicode_hits), 0)
 
 
 if __name__ == "__main__":

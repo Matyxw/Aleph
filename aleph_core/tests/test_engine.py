@@ -211,7 +211,7 @@ def safe_divide(x: int, y: int) -> int:
         gem_settings_path = base_dir / ".gemini" / "settings.json"
         gemini_md_path = base_dir / "GEMINI.md"
         idx_nix_path = base_dir / ".idx" / "dev.nix"
-        gov_v32_path = base_dir / ".aleph" / "UNIFIED_GOVERNANCE_MANIFEST_V32_0.json"
+        gov_v32_path = base_dir / ".aleph" / "UNIFIED_GOVERNANCE_MANIFEST_V33_0.json"
 
         for required_path in [
             mcp_json_path,

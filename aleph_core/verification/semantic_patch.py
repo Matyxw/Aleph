@@ -128,23 +128,19 @@ class SemanticPatchEngine:
                     )
                 )
 
-        class FunctionReplacer(ast.NodeTransformer):
-            def __init__(self, fn_name: str, new_node: ast.FunctionDef):
-                self.fn_name = fn_name
-                self.new_node = new_node
-                self.replaced = False
+        target_node: Optional[ast.FunctionDef] = None
+        for node in orig_tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name == target_function_name:
+                target_node = node
+                break
 
-            def visit_FunctionDef(self, node: ast.FunctionDef):
-                if node.name == self.fn_name:
-                    self.replaced = True
-                    return self.new_node
-                return node
+        if target_node is None:
+            for node in ast.walk(orig_tree):
+                if isinstance(node, ast.FunctionDef) and node.name == target_function_name:
+                    target_node = node
+                    break
 
-        replacer = FunctionReplacer(target_function_name, replacement_node)
-        modified_tree = replacer.visit(orig_tree)
-        ast.fix_missing_locations(modified_tree)
-
-        if not replacer.replaced:
+        if target_node is None:
             return SemanticPatchResult(
                 success=False,
                 patched_code="",
@@ -154,7 +150,43 @@ class SemanticPatchEngine:
                 error=f"La función objetivo '{target_function_name}' no existe en el código fuente original."
             )
 
-        patched_code = ast.unparse(modified_tree) + "\n"
+        start_idx = (
+            target_node.decorator_list[0].lineno - 1
+            if getattr(target_node, "decorator_list", None)
+            else target_node.lineno - 1
+        )
+        end_idx = getattr(target_node, "end_lineno", None)
+
+        if end_idx is not None:
+            orig_lines = original_source.splitlines(keepends=True)
+            indent = " " * getattr(target_node, "col_offset", 0)
+            rep_lines = replacement_function_source.strip("\n").splitlines(keepends=True)
+            if indent and rep_lines and not rep_lines[0].startswith(indent):
+                rep_lines = [indent + ln if ln.strip() else ln for ln in rep_lines]
+            if rep_lines and not rep_lines[-1].endswith("\n"):
+                rep_lines[-1] += "\n"
+            patched_lines = orig_lines[:start_idx] + rep_lines + orig_lines[end_idx:]
+            patched_code = "".join(patched_lines)
+            if not patched_code.endswith("\n"):
+                patched_code += "\n"
+            ast.parse(patched_code)
+        else:
+            class FunctionReplacer(ast.NodeTransformer):
+                def __init__(self, fn_name: str, new_node: ast.FunctionDef):
+                    self.fn_name = fn_name
+                    self.new_node = new_node
+                    self.replaced = False
+
+                def visit_FunctionDef(self, node: ast.FunctionDef):
+                    if node.name == self.fn_name:
+                        self.replaced = True
+                        return self.new_node
+                    return node
+
+            replacer = FunctionReplacer(target_function_name, replacement_node)
+            modified_tree = replacer.visit(orig_tree)
+            ast.fix_missing_locations(modified_tree)
+            patched_code = ast.unparse(modified_tree) + "\n"
 
         diff_lines = list(difflib.unified_diff(
             original_source.splitlines(keepends=True),

@@ -209,7 +209,7 @@ AlgorithmicRule(
             conn.commit()
 
     def search_knowledge_graph(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """Recuperación híbrida BM25 + expansión de 1 salto en el grafo de conocimiento."""
+        """Recuperación híbrida BM25 + expansión de 1 salto en el grafo de conocimiento en consulta única IN (...)."""
         q_tokens = set(re.findall(r"\w{3,}", query.lower()))
         with self.store._connection() as conn:
             rows = conn.execute("SELECT * FROM kg_nodes").fetchall()
@@ -220,10 +220,6 @@ AlgorithmicRule(
                 overlap = len(q_tokens & doc_tokens)
                 if overlap > 0 or not q_tokens:
                     score = overlap / math.sqrt(max(len(doc_tokens), 1))
-                    edges = conn.execute(
-                        "SELECT target_id, relation, weight FROM kg_edges WHERE source_id = ?",
-                        (r["node_id"],)
-                    ).fetchall()
                     scored.append({
                         "node_id": r["node_id"],
                         "node_type": r["node_type"],
@@ -231,7 +227,26 @@ AlgorithmicRule(
                         "content": r["content"],
                         "tags": json.loads(r["tags_json"]),
                         "score": round(score, 4),
-                        "links": [{"target": e["target_id"], "relation": e["relation"], "weight": e["weight"]} for e in edges]
+                        "links": []
                     })
             scored.sort(key=lambda x: x["score"], reverse=True)
-            return scored[:top_k]
+            top_scored = scored[:top_k]
+            if top_scored:
+                node_ids = [item["node_id"] for item in top_scored]
+                edges_by_source: Dict[str, List[Dict[str, Any]]] = {nid: [] for nid in node_ids}
+                for offset in range(0, len(node_ids), 500):
+                    chunk = node_ids[offset:offset + 500]
+                    placeholders = ",".join("?" for _ in chunk)
+                    edge_rows = conn.execute(
+                        f"SELECT source_id, target_id, relation, weight FROM kg_edges WHERE source_id IN ({placeholders})",
+                        tuple(chunk),
+                    ).fetchall()
+                    for e in edge_rows:
+                        edges_by_source[e["source_id"]].append({
+                            "target": e["target_id"],
+                            "relation": e["relation"],
+                            "weight": e["weight"],
+                        })
+                for item in top_scored:
+                    item["links"] = edges_by_source.get(item["node_id"], [])
+            return top_scored

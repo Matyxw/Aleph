@@ -7,6 +7,7 @@ Escanea entradas, salidas y código generado en <5ms buscando:
 4. Anti-patrones específicos de SparkOS (REG-001: uso de PageSetup.Draft=True o constantes mso* sin declarar).
 """
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import List, Dict, Any
 
@@ -32,13 +33,31 @@ class AegisShield:
         ),
         (
             "AEGIS-002", "CRITICAL", "SECRET_LEAK",
-            "Exposición de clave privada o API Token en texto plano",
-            re.compile(r"(BEGIN\s+(RSA|OPENSSH|EC)\s+PRIVATE\s+KEY|sk-[a-zA-Z0-9]{20,}|AIza[0-9A-Za-z\-_]{35}|ghp_[a-zA-Z0-9]{36})")
+            "Exposición de clave privada, JWT o API Token en texto plano",
+            re.compile(
+                r"(BEGIN\s+(RSA|OPENSSH|EC|DSA|PGP|ENCRYPTED)\s+PRIVATE\s+KEY"
+                r"|sk-(?:proj-|live-|test-)?[a-zA-Z0-9_\-]{20,}"
+                r"|AIza[0-9A-Za-z\-_]{35}"
+                r"|gh[pousr]_[A-Za-z0-9_]{36,}"
+                r"|github_pat_[A-Za-z0-9_]{22,}"
+                r"|AKIA[0-9A-Z]{16}"
+                r"|xox[baprs]-[0-9A-Za-z\-]{10,}"
+                r"|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})"
+            )
         ),
         (
             "AEGIS-003", "CRITICAL", "DANGEROUS_EXEC",
             "Comando destructivo de sistema de archivos o base de datos",
-            re.compile(r"(rm\s+-rf\s+/(?:\s|$)|DROP\s+DATABASE\s+\w+|FORMAT\s+C:)", re.IGNORECASE)
+            re.compile(
+                r"(rm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+(?:/(?:\s|$|\*)|~|\$HOME|%USERPROFILE%)"
+                r"|DROP\s+(?:DATABASE|SCHEMA|TABLE)\s+\w+"
+                r"|TRUNCATE\s+TABLE\s+\w+"
+                r"|FORMAT\s+[A-Z]:"
+                r"|mkfs\.[a-z0-9]+"
+                r"|dd\s+if=[^\s]+\s+of=/dev/"
+                r"|:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;)",
+                re.IGNORECASE,
+            )
         ),
         (
             "AEGIS-004", "HIGH", "SPARKOS_VIOLATION",
@@ -57,11 +76,14 @@ class AegisShield:
         ),
     ]
 
+    _ZERO_WIDTH_RE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\ufeff]")
+
     @classmethod
     def scan_text(cls, text: str) -> SecurityScanReport:
+        normalized = cls._ZERO_WIDTH_RE.sub("", unicodedata.normalize("NFKC", text))
         findings: List[ThreatFinding] = []
         for rule_id, sev, cat, desc, regex in cls.PATTERNS:
-            m = regex.search(text)
+            m = regex.search(normalized)
             if m:
                 findings.append(ThreatFinding(
                     rule_id=rule_id,

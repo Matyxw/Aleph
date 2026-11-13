@@ -69,10 +69,13 @@ class SMTExpressionBuilder:
         self.bv_bits = bv_bits
         self.name_resolver = name_resolver
 
-    def get_var(self, name: str) -> Any:
+    def get_var(self, name: str, is_bool: bool = False) -> Any:
         if name not in self.var_env:
+            use_bool = is_bool or ("_has_" in name)
             if HAS_Z3:
-                if self.use_bitvectors:
+                if use_bool:
+                    self.var_env[name] = z3.Bool(name)
+                elif self.use_bitvectors:
                     self.var_env[name] = z3.BitVec(name, self.bv_bits)
                 else:
                     self.var_env[name] = z3.Int(name)
@@ -152,12 +155,12 @@ class SMTExpressionBuilder:
                 elif isinstance(op, ast.In) and isinstance(curr_l, tuple) and curr_l[0] == "CONST" and isinstance(curr_l[1], str):
                     d_name = ast.unparse(comp)
                     k_name = curr_l[1]
-                    has_v = self.get_var(f"{d_name}_has_{k_name}")
+                    has_v = self.get_var(f"{d_name}_has_{k_name}", is_bool=True)
                     conds.append(("CMP", "==", has_v, ("CONST", True)))
                 elif isinstance(op, ast.NotIn) and isinstance(curr_l, tuple) and curr_l[0] == "CONST" and isinstance(curr_l[1], str):
                     d_name = ast.unparse(comp)
                     k_name = curr_l[1]
-                    has_v = self.get_var(f"{d_name}_has_{k_name}")
+                    has_v = self.get_var(f"{d_name}_has_{k_name}", is_bool=True)
                     conds.append(("CMP", "==", has_v, ("CONST", False)))
                 curr_l = curr_r
             return conds[0] if len(conds) == 1 else ("BOOLOP", "AND", conds)
@@ -211,6 +214,8 @@ class SMTExpressionBuilder:
                 return z3.BoolVal(node.value)
             elif isinstance(node.value, int):
                 return z3.BitVecVal(node.value, self.bv_bits) if self.use_bitvectors else z3.IntVal(node.value)
+            elif isinstance(node.value, str):
+                return z3.StringVal(node.value)
             elif node.value is None:
                 return z3.IntVal(0)
         elif isinstance(node, ast.Name):
@@ -265,12 +270,12 @@ class SMTExpressionBuilder:
                 elif isinstance(op, ast.In) and isinstance(node.left, ast.Constant) and isinstance(node.left.value, str):
                     d_name = ast.unparse(comparator)
                     k_name = node.left.value
-                    has_v = self.get_var(f"{d_name}_has_{k_name}")
+                    has_v = self.get_var(f"{d_name}_has_{k_name}", is_bool=True)
                     cond = (has_v == z3.BoolVal(True))
                 elif isinstance(op, ast.NotIn) and isinstance(node.left, ast.Constant) and isinstance(node.left.value, str):
                     d_name = ast.unparse(comparator)
                     k_name = node.left.value
-                    has_v = self.get_var(f"{d_name}_has_{k_name}")
+                    has_v = self.get_var(f"{d_name}_has_{k_name}", is_bool=True)
                     cond = (has_v == z3.BoolVal(False))
                 else:
                     raise NotImplementedError(f"Comparación {op} no soportada")
@@ -321,7 +326,7 @@ class SMTExpressionBuilder:
             d_name = ast.unparse(node.func.value)
             k_name = node.args[0].value
             default_val = self._compile_z3(node.args[1]) if len(node.args) > 1 else (z3.BitVecVal(0, self.bv_bits) if self.use_bitvectors else z3.IntVal(0))
-            has_v = self.get_var(f"{d_name}_has_{k_name}")
+            has_v = self.get_var(f"{d_name}_has_{k_name}", is_bool=True)
             val_v = self.get_var(f"{d_name}_val_{k_name}")
             return z3.If(has_v == z3.BoolVal(True), val_v, default_val)
         elif isinstance(node, ast.Attribute):

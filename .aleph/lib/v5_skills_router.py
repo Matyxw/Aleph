@@ -2,7 +2,7 @@
 """
 El Aleph - Subsistema Soberano de Skills v5 (Aleph Skills Ecosystem v5)
 Módulo: v5_skills_router.py
-Ubicación: C:\\Users\\Lucas cardozo\\.aleph\\lib\\v5_skills_router.py
+Ubicación: .aleph/lib/v5_skills_router.py
 
 Implementación de Grado de Producción para:
 - Arquitectura de Progressive Disclosure de 4 Niveles (L0 Disco Frío a L3 Sandbox)

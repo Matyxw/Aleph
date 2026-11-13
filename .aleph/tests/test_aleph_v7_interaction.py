@@ -25,7 +25,15 @@ Pruebas exhaustivas y deterministas para:
 import math
 import sys
 from pathlib import Path
-import pytest
+try:
+    import pytest
+    _raises = pytest.raises
+except ImportError:
+    import unittest as _unittest
+    _tc = _unittest.TestCase()
+
+    def _raises(exc_type, match=None):  # type: ignore[misc]
+        return _tc.assertRaisesRegex(exc_type, match) if match else _tc.assertRaises(exc_type)
 
 # Asegurar importación de la librería de Aleph
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
@@ -157,7 +165,7 @@ class TestKineticODESimulation:
         assert math.isclose(spring.damping_ratio, 0.707, rel_tol=1e-5)
         assert spring.mass == 2.0
 
-        with pytest.raises(ValueError, match="zeta no puede ser negativo"):
+        with _raises(ValueError, match="zeta no puede ser negativo"):
             SpringPhysicsODE.from_zeta(zeta=-0.1)
 
     def test_overdamped_regime(self):
@@ -276,7 +284,7 @@ class TestHapticStateMatrix:
                 InteractionState.LOADING_PENDING,
             ]
         }
-        with pytest.raises(ValueError, match="Matriz de Interacción incompleta"):
+        with _raises(ValueError, match="Matriz de Interacción incompleta"):
             InteractionStateMatrix(states=incomplete_states)
 
     def test_canonical_button_matrix_properties(self):

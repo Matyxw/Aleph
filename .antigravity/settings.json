@@ -8,8 +8,9 @@
   "antigravity.agent.rulesFiles": [
     ".antigravity/rules.md",
     "GEMINI.md",
-    ".aleph/README.md",
-    ".aleph/DESIGN_TOKENS_V7.json"
+    ".aleph/CLAUDE.md",
+    ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V33_0.json",
+    ".aleph/ALEPH_SOVEREIGN_WORLD_DESIGNER_MASTER_PLAN_V7.md"
   ],
   "antigravity.verification.preWriteGate": "aleph_audit_code",
   "antigravity.verification.uiGate": "aleph_prove_dot_aleph_sovereign_world_designer_and_governance_gate",

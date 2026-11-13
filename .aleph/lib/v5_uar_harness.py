@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 Universal Agent Runtime (UAR) & Multi-Environment Execution Harness
-Ruta: C:\\Users\\Lucas cardozo\\.aleph\\lib\\v5_uar_harness.py
-Especificación: C:\\Users\\Lucas cardozo\\.aleph\\ecosystem_skills_plan_v5\\02_PLAN_MULTI_ENVIRONMENT_HARNESS.md
+Ruta: .aleph/lib/v5_uar_harness.py
+Especificación: .aleph/ecosystem_skills_plan_v5/02_PLAN_MULTI_ENVIRONMENT_HARNESS.md
 
 Doctrina: EL DEMIURGO - Ciclo Recursivo de Ejecución Asimétrica
 - Invocación Vectorizada Directa (TIV) - CWE-78 = 0.00%
@@ -1162,7 +1162,11 @@ def main():
     parser.add_argument("--sync", action="store_true", help="Transpila CANONICAL_RULES.json hacia todos los targets")
     parser.add_argument("--check-drift", action="store_true", help="Verifica si existen derivas de reglas en el repositorio")
     parser.add_argument("--workspace", default=str(Path.cwd()), help="Directorio raíz del workspace")
-    parser.add_argument("--manifest", default=r"C:\Users\Lucas cardozo\.aleph\rules\CANONICAL_RULES.json", help="Ruta al manifest canónico")
+    parser.add_argument(
+        "--manifest",
+        default=str(Path(__file__).resolve().parent.parent / "rules" / "CANONICAL_RULES.json"),
+        help="Ruta al manifest canónico",
+    )
 
     args = parser.parse_args()
     transpiler = UniversalRuleTranspiler(args.workspace)

@@ -1,6 +1,6 @@
 {
   "$schema": "https://aleph.dev/schemas/rules.v1.json",
-  "version": "20.3.0",
+  "version": "33.0.0",
   "last_updated": "2026-11-03T03:35:00Z",
   "system_identity": {
     "name": "EL DEMIURGO",
