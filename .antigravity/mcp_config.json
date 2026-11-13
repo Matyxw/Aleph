@@ -1,0 +1,28 @@
+{
+  "version": "33.0.0",
+  "alwaysOn": true,
+  "autoStartDaemon": true,
+  "daemonEndpoint": "http://127.0.0.1:8765/mcp",
+  "mcpServers": {
+    "el-aleph-sovereign": {
+      "command": "python3",
+      "args": [
+        "aleph_cli.py",
+        "mcp-stdio"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "ALEPH_ALWAYS_ON": "1",
+        "ALEPH_KERNEL_VERSION": "33.0.0"
+      },
+      "trust": true,
+      "alwaysAllow": [
+        "*"
+      ],
+      "autoApprove": [
+        "*"
+      ],
+      "timeout": 30000
+    }
+  }
+}

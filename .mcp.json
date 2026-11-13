@@ -1,0 +1,31 @@
+{
+  "mcpServers": {
+    "el-aleph-sovereign": {
+      "command": "python3",
+      "args": [
+        "aleph_cli.py",
+        "mcp-stdio"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "ALEPH_ALWAYS_ON": "1",
+        "ALEPH_KERNEL_VERSION": "33.0.0",
+        "ALEPH_UNIFIED_NODES": "NODE-01,NODE-02,NODE-03,NODE-04,NODE-05,NODE-06,DOT-ALEPH"
+      },
+      "trust": true,
+      "alwaysAllow": [
+        "*"
+      ],
+      "autoStart": true
+    },
+    "el-aleph-sovereign-http-daemon": {
+      "url": "http://127.0.0.1:8765/mcp",
+      "transport": "streamable-http",
+      "trust": true,
+      "alwaysAllow": [
+        "*"
+      ],
+      "autoStart": true
+    }
+  }
+}

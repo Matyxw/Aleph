@@ -1,0 +1,18 @@
+================================================================================
+EL ALEPH v33.0.0 — INICIO RÁPIDO (GOOGLE ANTIGRAVITY ALWAYS-ON + BITÁCORA NATIVA)
+================================================================================
+
+1. VERIFICACIÓN INMEDIATA DEL KERNEL Y LA BITÁCORA INTERNA (350 REGLAS):
+   $ python3 aleph_cli.py test
+   $ python3 aleph_cli.py bitacora-status
+   $ python3 aleph_cli.py omega-self-improve
+
+2. ACTIVACIÓN PERMANENTE (ALWAYS-ON) EN GOOGLE ANTIGRAVITY:
+   - El archivo .antigravity/mcp_config.json registra el servidor MCP soberano
+     con las 730 herramientas formales y la variable ALEPH_BITACORA_VAULT_ALWAYS_ON=1.
+   - Los hooks .aleph/hooks/aleph_antigravity_omega_hook.py interceptan cada
+     turno pre-ejecución (inyectando las reglas relevantes de las 350 mediante
+     HippoRAG 2 PPR) y post-ejecución (calculando sorpresa epistémica de Titans
+     y consolidando nuevas reglas en .aleph/BITACORA_MASTER_VAULT_V33.json con
+     0.0% de olvido catastrófico).
+================================================================================

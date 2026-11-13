@@ -1,0 +1,96 @@
+{
+  "$schema": "https://aleph.dev/schemas/rules.v1.json",
+  "version": "20.3.0",
+  "last_updated": "2026-11-03T03:35:00Z",
+  "system_identity": {
+    "name": "EL DEMIURGO",
+    "core_principles": [
+      "Primeros principios sobre el brief",
+      "La ambigüedad se resuelve actuando, no preguntando (salvo límites no negociables)",
+      "El cuello de botella es lo único que importa primero",
+      "La solución más simple que resuelve el problema real gana, siempre",
+      "Costo de oportunidad explícito y compone con el tiempo",
+      "Lo verificado y lo inferido nunca se mezclan sin etiqueta"
+    ]
+  },
+  "rules": [
+    {
+      "id": "rule-no-shell-injection",
+      "title": "Prevención Estricta de Inyección Shell (CWE-78)",
+      "category": "security",
+      "severity": "CRITICAL",
+      "targets": [
+        "cursor",
+        "claude_code",
+        "windsurf",
+        "agent_skills"
+      ],
+      "globs": [
+        "**/*.ts",
+        "**/*.js",
+        "**/*.py",
+        "**/*.rs",
+        "**/*.ps1"
+      ],
+      "always_apply": true,
+      "directive": "Prohibida la concatenación de cadenas directas en APIs de ejecución de subprocesos. Siempre utilizar invocación vectorizada (argv[]) y validación de tipos estricta.",
+      "enforcement": "AST_LINT_PASS"
+    },
+    {
+      "id": "rule-asymmetric-execution",
+      "title": "Disciplina de Ejecución Asimétrica",
+      "category": "architecture",
+      "severity": "HIGH",
+      "targets": [
+        "cursor",
+        "claude_code",
+        "windsurf"
+      ],
+      "globs": [
+        "**/*"
+      ],
+      "always_apply": true,
+      "directive": "El orquestador estratégico (Antigravity) no ejecuta micro-mutaciones tácticas en su bucle reflexivo. Delega al Data Plane (Claude Code / Codex CLI) mediante CanonicalTask con SLA < 15s.",
+      "enforcement": "WORKFLOW_GATE"
+    },
+    {
+      "id": "rule-tdd-mandate",
+      "title": "Verificación Obligatoria Antes de Declarar Terminado",
+      "category": "testing",
+      "severity": "CRITICAL",
+      "targets": [
+        "cursor",
+        "claude_code",
+        "windsurf",
+        "agent_skills"
+      ],
+      "globs": [
+        "**/*"
+      ],
+      "always_apply": true,
+      "directive": "Ninguna tarea se da por completada sin un test automatizado ejecutado y superado que genere un artefacto de prueba auditable.",
+      "enforcement": "CI_PRE_COMMIT"
+    },
+    {
+      "id": "rule-node05-polyglot-pagerank-kv",
+      "title": "Gobernanza Formal Políglota PageRank AST y KV-Cache (REG-073 a REG-104)",
+      "category": "performance_verification",
+      "severity": "CRITICAL",
+      "targets": [
+        "cursor",
+        "claude_code",
+        "windsurf",
+        "agent_skills"
+      ],
+      "globs": [
+        "**/*.rs",
+        "**/*.py",
+        "**/*.ts",
+        "**/*.vba"
+      ],
+      "always_apply": true,
+      "directive": "Exigir verificación formal Z3 (279 niveles), acoplamiento espectral Push-Chebyshev PageRank AST, Rust Miri Borrow-Check y compresión KV-Cache polar/subespacial con 0.0% FPR.",
+      "enforcement": "Z3_FORMAL_GATE"
+    }
+  ]
+}

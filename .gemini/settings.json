@@ -1,0 +1,23 @@
+{
+  "contextFileName": [
+    "GEMINI.md",
+    ".antigravity/rules.md",
+    ".aleph/README.md"
+  ],
+  "mcpServers": {
+    "el-aleph-sovereign": {
+      "command": "python3",
+      "args": [
+        "aleph_cli.py",
+        "mcp-stdio"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "ALEPH_ALWAYS_ON": "1",
+        "ALEPH_KERNEL_VERSION": "33.0.0"
+      },
+      "trust": true,
+      "timeout": 30000
+    }
+  }
+}

@@ -1,0 +1,37 @@
+# Python caches & environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Runtime state, databases & journals
+aleph_core/data/
+*.db
+*.sqlite
+*.sqlite3
+*.journal.jsonl
+
+# Scratch, logs & temporary artifacts
+.aleph/events.jsonl
+.aleph/TODO.md
+.aleph/traces/
+.aleph/test_scratch_wt/
+.aleph/worktrees_ram/
+.aleph/memory/
+*.aleph-cert.json
+*.log
+*.tmp
+*.bak
+*.orig
+
+# Secrets & OS junk
+.env
+.env.*
+.DS_Store
+Thumbs.db
+desktop.ini
