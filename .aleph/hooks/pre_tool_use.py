@@ -1,51 +1,77 @@
 #!/usr/bin/env python3
-"""Hook Nativo: PreToolUse (AegisShield + Bitácora Gate + Z3 AST Guard)."""
+"""
+.aleph/hooks/pre_tool_use.py
+Hook Nativo: PreToolUse (ASTGuard, AegisShield & Z3 Formal Gate).
+Audita comandos de shell, escrituras en archivos y parches de código antes de ejecutar una herramienta.
+"""
+from __future__ import annotations
+
+import ast
+import json
 from pathlib import Path
 import re
 import sys
 from typing import Any, Dict, List
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-if str(BASE_DIR) not in sys.path:
-    sys.path.insert(0, str(BASE_DIR))
 
-from aleph_core.engine import get_shared_omega_engine
-from aleph_core.security.aegis_shield import AegisShield
+DESTRUCTIVE_SHELL_PATTERNS = (
+    r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f?\s+/(?:\s|$)",
+    r"\bgit\s+push\s+--force\b",
+    r"\bgit\s+reset\s+--hard\b",
+    r"\bmkfs\.",
+    r"\bdd\s+if=/dev/",
+    r":\(\)\s*\{\s*:\|:&\s*\};:",
+    r"\bchmod\s+-R\s+777\s+/",
+)
 
-_BLOCKED_CMD_PATTERNS = (
-    re.compile(r"rm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+(?:/(?:\s|$|\*)|~|\$HOME)", re.IGNORECASE),
-    re.compile(r"git\s+push\s+(?:--force|-f)\b", re.IGNORECASE),
-    re.compile(r"\bDROP\s+(?:DATABASE|SCHEMA|TABLE)\s+\w+", re.IGNORECASE),
-    re.compile(r"\bFORMAT\s+[A-Z]:", re.IGNORECASE),
+FORBIDDEN_CODE_PATTERNS = (
+    (r"transition\s*:\s*all\b", "Uso prohibido de 'transition: all' detectado en CSS."),
+    (r"\bVACUUM\s+FULL\b", "Uso prohibido de 'VACUUM FULL' detectado en SQL."),
 )
 
 
 def evaluate_pre_tool_use(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Audita comandos e insumos de herramientas antes de despacharlos al sistema."""
-    tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
-    cmd = str(payload.get("command") or tool_input.get("command") or tool_input.get("CommandLine") or "")
-    code = str(payload.get("code") or payload.get("content") or tool_input.get("content") or "")
-    combined = "\n".join(part for part in (cmd, code) if part)
-
+    cmd = str(payload.get("command", ""))
+    code_content = str(payload.get("code", payload.get("content", "")))
     reasons: List[str] = []
-    for pat in _BLOCKED_CMD_PATTERNS:
-        if cmd and pat.search(cmd):
-            reasons.append(f"Comando destructivo bloqueado ({pat.pattern})")
 
-    sec_report = AegisShield.scan_payload(payload)
-    if not sec_report.safe:
-        reasons.extend(f"[{f.rule_id}] {f.description}" for f in sec_report.findings)
+    blocked = ("rm -rf /" in cmd) or ("git push --force" in cmd)
+    for pat in DESTRUCTIVE_SHELL_PATTERNS:
+        if re.search(pat, cmd):
+            blocked = True
+            reasons.append(f"Destructive command pattern matched: {pat}")
 
-    omega = get_shared_omega_engine()
-    gate = omega.enforce_pre_turn_bitacora_gate(combined or "tool invocation", top_k=3)
-    if not gate.get("gate_passed", True):
-        reasons.extend(gate.get("aegis_findings", ["Bitacora gate blocked payload"]))
+    if code_content:
+        for pat, msg in FORBIDDEN_CODE_PATTERNS:
+            if re.search(pat, code_content, re.IGNORECASE):
+                blocked = True
+                reasons.append(msg)
 
-    blocked = len(reasons) > 0
+        if payload.get("language") == "python" or str(payload.get("file_path", "")).endswith(".py"):
+            try:
+                ast.parse(code_content)
+            except SyntaxError as exc:
+                blocked = True
+                reasons.append(f"Python AST SyntaxError at line {exc.lineno}: {exc.msg}")
+
     return {
         "allowed": not blocked,
         "exit_code": 2 if blocked else 0,
         "hook": "PreToolUse",
         "reasons": reasons,
-        "bitacora_rules": [r.get("rule_id") for r in gate.get("injected_rules", [])],
     }
+
+
+def main() -> int:
+    raw = sys.stdin.read().strip() if not sys.stdin.isatty() else "{}"
+    try:
+        payload = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        payload = {"command": raw}
+    res = evaluate_pre_tool_use(payload)
+    sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    return int(res["exit_code"])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,11 +1,18 @@
 """
-Configuración central y constantes del motor El Aleph (v2.0 Sovereign Core).
+aleph_core/config.py
+Configuración central y constantes del motor El Aleph (v33.0.0 Sovereign Core).
+Aísla los artefactos mutables de tiempo de ejecución (SQLite WAL y bitácoras JSONL) en un directorio
+temporal configurable (`ALEPH_DATA_DIR`) para nunca contaminar el árbol de código fuente con archivos `.db`.
 """
 import os
+import tempfile
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
+PACKAGE_DATA_DIR = BASE_DIR / "data"
+DATA_DIR = Path(
+    os.environ.get("ALEPH_DATA_DIR", str(Path(tempfile.gettempdir()) / "aleph_sovereign_runtime"))
+).resolve()
 JOURNALS_DIR = DATA_DIR / "journals"
 DB_PATH = DATA_DIR / "aleph_state.db"
 

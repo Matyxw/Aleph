@@ -1,7 +1,7 @@
 # PLAN MAESTRO PRAGMÁTICO DE EL ALEPH — PARTE 3
 ## MEMORY VAULT EN GIT/MARKDOWN, CATÁLOGO DE SKILLS Y GOBERNANZA FUERA DE BANDA
 
-> **Documento:** `C:\Users\Lucas cardozo\.aleph\plan_03_memory_governance.md`  
+> **Documento:** `.aleph\plan_03_memory_governance.md`  
 > **Subsistema:** Aleph Core // Memoria Persistente, Procedural Catalog & Runtime Security  
 > **Autor:** El Demiurgo (Motor de Build & Memory)  
 > **Doctrina:** `affaan-m/everything-claude-code` (ECC) + Protocolo Universal de Razonamiento y Ejecución  
@@ -55,10 +55,10 @@ Adoptando la doctrina empírica probada en batalla por `affaan-m/everything-clau
 ## 1. Topología Física del Memory Vault (`.aleph/memory/`)
 
 ### 1.1 Estructura Jerárquica de Directorios
-La persistencia de memoria se descentraliza en el sistema de archivos bajo `C:\Users\Lucas cardozo\.aleph\memory\`. No existe un único punto central de contención; cada dominio semántico posee su propio espacio aislado:
+La persistencia de memoria se descentraliza en el sistema de archivos bajo `.aleph\memory\`. No existe un único punto central de contención; cada dominio semántico posee su propio espacio aislado:
 
 ```text
-C:\Users\Lucas cardozo\.aleph\
+.aleph\
 ├── memory/
 │   ├── .git/                                 # Sub-repositorio Git aislado para el Memory Vault
 │   ├── .gitignore                            # Exclusión de archivos .tmp y caches volátiles
@@ -518,7 +518,7 @@ class MemoryVault:
     """
     Fachada canónica para operaciones sobre el Memory Vault.
     """
-    def __init__(self, root_dir: Path = Path("C:/Users/Lucas cardozo/.aleph/memory")):
+    def __init__(self, root_dir: Path = Path(".aleph/memory")):
         self.root_dir = Path(root_dir)
         self.staging_dir = self.root_dir / ".staging"
         self.index_file = self.root_dir / "index.json"
@@ -678,8 +678,8 @@ class SkillRegistryEngine:
     """
     def __init__(
         self,
-        skills_root: Path = Path("C:/Users/Lucas cardozo/.agents/skills"),
-        manifest_cache: Path = Path("C:/Users/Lucas cardozo/.aleph/skills_manifest.json")
+        skills_root: Path = Path("./.agents/skills"),
+        manifest_cache: Path = Path(".aleph/skills_manifest.json")
     ):
         self.skills_root = Path(skills_root)
         self.manifest_cache = Path(manifest_cache)
@@ -1032,7 +1032,7 @@ class GovernanceGate:
 ## 6. Plan de Migración y Limpieza del Código Legacy de `aleph_core`
 
 ### 6.1 Auditoría del Código Existente en `aleph_core`
-El código actual en `C:\Users\Lucas cardozo\aleph_core` implementa la persistencia acoplada a SQLite:
+El código actual en `./aleph_core` implementa la persistencia acoplada a SQLite:
 
 1. **`aleph_core/config.py`:** Define `DB_PATH = DATA_DIR / "aleph_state.db"`, `SQLITE_TIMEOUT_SEC = 10.0`.
 2. **`aleph_core/state/store.py`:** Contiene `StateStore` con tablas `epistemic_claims`, `state_leases`, `task_ledger` en SQLite con WAL. Sufre contención en Windows.
@@ -1162,8 +1162,8 @@ def run_migration(db_path: Path, vault_dir: Path):
     print(f"[+] Archivo SQLite renombrado a {backup_path}. SQLite eliminado del pipeline activo.")
 
 if __name__ == "__main__":
-    db = Path("C:/Users/Lucas cardozo/aleph_core/data/aleph_state.db")
-    vault_path = Path("C:/Users/Lucas cardozo/.aleph/memory")
+    db = Path("./aleph_core/data/aleph_state.db")
+    vault_path = Path(".aleph/memory")
     run_migration(db, vault_path)
 ```
 

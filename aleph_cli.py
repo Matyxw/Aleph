@@ -1,20 +1,16 @@
+from dataclasses import asdict
 #!/usr/bin/env python3
 """
-CLI Unificado de El Aleph v33.0.0 (Sovereign Omega Agent Harness).
+CLI Unificado de El Aleph v2.0 (Sovereign Agent Harness).
 Comandos soportados:
   python3 aleph_cli.py test       -> Ejecuta la batería completa de tests unitarios y formales
-  python3 aleph_cli.py benchmark  -> Ejecuta el benchmark cuantitativo El Aleph v33.0.0 vs. ECC
+  python3 aleph_cli.py benchmark  -> Ejecuta el benchmark cuantitativo El Aleph v2.0 vs. ECC
   python3 aleph_cli.py verify <archivo.py> -> Audita formalmente todas las funciones de un archivo Python
   python3 aleph_cli.py evolve     -> Dispara un ciclo autónomo de automejora Demiurgo
   python3 aleph_cli.py mine-spec <archivo.py> -> Induce y prueba formalmente contratos de funciones
   python3 aleph_cli.py git-gate [dir] -> Compuerta Pre-Commit Soberana de Integridad de Workspace
-  python3 aleph_cli.py mcp-stdio | mcp-serve -> Inicia el servidor MCP JSON-RPC 2.0 sobre stdio
-  python3 aleph_cli.py mcp-http [port] -> Inicia el servidor MCP Streamable HTTP
-  python3 aleph_cli.py bitacora-status | bitacora-search | bitacora-enforce | bitacora-learn | bitacora-export
 """
-import argparse
 import ast
-from dataclasses import asdict
 import json
 import sys
 import unittest
@@ -22,11 +18,25 @@ from typing import Optional
 from pathlib import Path
 
 from aleph_core.engine import AlephEngine, AlephUniversalMCPServer
-from aleph_core.verification.z3_prover import Z3VerificationEngine
-from aleph_core.benchmarks.ecc_vs_aleph import run_comparative_benchmark
 
 
-def cmd_antigravity_always_on(install_user_home: bool = True, start_daemon: bool = False) -> int:
+# Tools verificadas como solo-lectura (no escriben a disco ni ejecutan procesos): únicas que se
+# auto-aprueban. Todo lo demás (p. ej. aleph_apply_semantic_patch, aleph_bitacora_learn_experiential_rule,
+# aleph_omega_dgm_alphaevolve_self_improve) pide confirmación humana en el cliente.
+SAFE_AUTO_APPROVE_TOOLS = [
+    "aleph_bitacora_query_hipporag2_ppr",
+    "aleph_bitacora_enforce_pre_turn_gate",
+    "aleph_bitacora_vault_status_and_telemetry",
+    "aleph_verify_and_repair",
+    "aleph_analyze_interprocedural_taint",
+    "aleph_verify_deep_supabase_rls",
+    "aleph_verify_zero_downtime_ddl",
+    "aleph_build_pagerank_repomap",
+    "aleph_audit_and_repair_design_tokens_wcag",
+]
+
+
+def cmd_antigravity_always_on(install_user_home: bool = False, start_daemon: bool = False) -> int:
     """
     Configura e instala El Aleph v33.0.0 en modo Always-On para Google Antigravity,
     Gemini CLI, Project IDX y clientes MCP compatibles.
@@ -41,9 +51,8 @@ def cmd_antigravity_always_on(install_user_home: bool = True, start_daemon: bool
             "ALEPH_ALWAYS_ON": "1",
             "ALEPH_KERNEL_VERSION": "33.0.0",
         },
-        "trust": True,
-        "alwaysAllow": ["*"],
-        "autoApprove": ["*"],
+        "trust": False,
+        "alwaysAllow": list(SAFE_AUTO_APPROVE_TOOLS),
         "timeout": 30000,
     }
     installed_paths = []
@@ -75,14 +84,6 @@ def cmd_antigravity_always_on(install_user_home: bool = True, start_daemon: bool
             except Exception:
                 pass
 
-    daemon_status = None
-    if start_daemon:
-        try:
-            from aleph_mcp_client import AlephMCPClient
-            daemon_status = AlephMCPClient().ensure_http_daemon()
-        except Exception as exc:
-            daemon_status = {"status": "failed_to_start", "error": str(exc)}
-
     report = {
         "status": "ANTIGRAVITY_ALWAYS_ON_ACTIVE",
         "kernel_version": "33.0.0",
@@ -91,8 +92,7 @@ def cmd_antigravity_always_on(install_user_home: bool = True, start_daemon: bool
         "formal_classes_count": 1580,
         "configured_files": installed_paths,
         "stdio_command": f"{sys.executable or 'python3'} {cli_abs} mcp-stdio",
-        "http_daemon_endpoint": "http://127.0.0.1:8765/mcp",
-        "daemon_status": daemon_status,
+        "http_daemon": "desactivado por defecto; arrancar a mano con `mcp-http` (exige Bearer token, ver .aleph/.mcp_token)",
     }
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
@@ -149,17 +149,34 @@ def cmd_omega_self_improve(task_desc: str = "Ciclo autónomo DGM + AlphaEvolve +
     return 0 if rep.passed else 1
 
 def cmd_test() -> int:
-    suite = unittest.defaultTestLoader.discover(str(Path(__file__).resolve().parent / "aleph_core" / "tests"))
+    root_dir = Path(__file__).resolve().parent
+    dot_aleph = root_dir / ".aleph"
+    dot_tests = dot_aleph / "tests"
+    for p_dir in (root_dir, dot_aleph, dot_aleph / "lib", dot_aleph / "v4_engine", dot_aleph / "scripts", dot_aleph / "hooks", dot_tests):
+        if str(p_dir) not in sys.path:
+            sys.path.insert(0, str(p_dir))
+    suite = unittest.TestSuite()
+    suite.addTests(unittest.TestLoader().discover(
+        start_dir=str(root_dir / "aleph_core" / "tests"),
+        top_level_dir=str(root_dir / "aleph_core" / "tests"),
+    ))
+    if dot_tests.exists():
+        suite.addTests(unittest.TestLoader().discover(
+            start_dir=str(dot_tests),
+            top_level_dir=str(dot_tests),
+        ))
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
     return 0 if result.wasSuccessful() else 1
 
 def cmd_benchmark() -> int:
+    from aleph_core.benchmarks.ecc_vs_aleph import run_comparative_benchmark
     metrics = run_comparative_benchmark()
     print(json.dumps(metrics, indent=2, ensure_ascii=False))
     return 0
 
 def cmd_verify(target_file: str) -> int:
+    from aleph_core.verification.z3_prover import Z3VerificationEngine
     path = Path(target_file)
     if not path.exists():
         print(f"Error: archivo no encontrado: {target_file}", file=sys.stderr)
@@ -420,7 +437,7 @@ def cmd_gemini_config() -> int:
                         "args": [cli_path_str, "mcp-serve"],
                         "cwd": cwd,
                         "timeout": 30000,
-                        "trust": True
+                        "trust": False
                     }
                 }
             }
@@ -1019,7 +1036,7 @@ def cmd_awwwards_scrollbars_where_wcag33(path_or_code: str, component_name: str 
     return 0 if rep.passed else 1
 
 
-def cmd_dot_aleph_audit(path_or_code: str, target_path: str = ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V33_0.json") -> int:
+def cmd_dot_aleph_audit(path_or_code: str, target_path: str = ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V11.json") -> int:
     from aleph_core.verification import DotAlephSovereignWorldDesignerAndGovernanceGateProver
     p = Path(path_or_code)
     source = p.read_text(encoding="utf-8") if p.exists() and p.is_file() else path_or_code
@@ -3231,42 +3248,17 @@ if __name__ == "__main__":
     elif cmd == "bitacora-enforce":
         arg = sys.argv[2] if len(sys.argv) > 2 else "SELECT 1;"
         sys.exit(cmd_bitacora_enforce(arg))
-    elif cmd == "bitacora-learn":
-        raw_args = sys.argv[2:]
-        if any(a.startswith("--") for a in raw_args):
-            p_learn = argparse.ArgumentParser(prog="aleph_cli.py bitacora-learn")
-            p_learn.add_argument("--friction", required=True)
-            p_learn.add_argument("--si", required=True)
-            p_learn.add_argument("--entonces", required=True)
-            p_learn.add_argument("--evitar", required=True)
-            p_learn.add_argument("--shard", default="MASTER-V33")
-            parsed_l = p_learn.parse_args(raw_args)
-            sys.exit(cmd_bitacora_learn(parsed_l.friction, parsed_l.si, parsed_l.entonces, parsed_l.evitar, parsed_l.shard))
-        elif len(raw_args) >= 4:
-            sh = raw_args[4] if len(raw_args) > 4 else "MASTER-V33"
-            sys.exit(cmd_bitacora_learn(raw_args[0], raw_args[1], raw_args[2], raw_args[3], sh))
-        else:
-            print("Uso: aleph_cli.py bitacora-learn --friction ... --si ... --entonces ... --evitar ... [--shard ...]", file=sys.stderr)
-            sys.exit(2)
+    elif cmd == "bitacora-learn" and len(sys.argv) >= 6:
+        sh = sys.argv[6] if len(sys.argv) > 6 else "MASTER-V33"
+        sys.exit(cmd_bitacora_learn(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sh))
     elif cmd == "bitacora-export":
-        raw_args = sys.argv[2:]
-        out_p = "SparkOS_Bitacora_Reglas_Master_Unified_v33_0_0.csv"
-        if "--output" in raw_args:
-            idx = raw_args.index("--output")
-            if idx + 1 < len(raw_args):
-                out_p = raw_args[idx + 1]
-        elif "-o" in raw_args:
-            idx = raw_args.index("-o")
-            if idx + 1 < len(raw_args):
-                out_p = raw_args[idx + 1]
-        elif raw_args:
-            out_p = raw_args[0]
+        out_p = sys.argv[2] if len(sys.argv) > 2 else "SparkOS_Bitacora_Reglas_Master_Unified_v33_0_0.csv"
         sys.exit(cmd_bitacora_export(out_p))
     elif cmd in ("omega-self-improve", "self-improve"):
         td = sys.argv[2] if len(sys.argv) > 2 else "Ciclo autónomo DGM + AlphaEvolve + HippoRAG 2 + Titans"
         sys.exit(cmd_omega_self_improve(td))
     elif cmd in ("antigravity-always-on", "antigravity-setup"):
-        sys.exit(cmd_antigravity_always_on(install_user_home=("--no-home" not in sys.argv), start_daemon=("--daemon" in sys.argv)))
+        sys.exit(cmd_antigravity_always_on(install_user_home=("--install-user-home" in sys.argv), start_daemon=("--daemon" in sys.argv)))
     elif cmd == "test":
         sys.exit(cmd_test())
     elif cmd == "benchmark":
@@ -3487,7 +3479,7 @@ if __name__ == "__main__":
         cn = sys.argv[3] if len(sys.argv) > 3 else "AwwwardsScrollbarsWhereAndWCAG33Stage.tsx"
         sys.exit(cmd_awwwards_scrollbars_where_wcag33(sys.argv[2], cn))
     elif cmd == "dot-aleph-audit" and len(sys.argv) > 2:
-        tp = sys.argv[3] if len(sys.argv) > 3 else ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V33_0.json"
+        tp = sys.argv[3] if len(sys.argv) > 3 else ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V11.json"
         sys.exit(cmd_dot_aleph_audit(sys.argv[2], tp))
     elif cmd == "aead-cswsh-graphql-audit" and len(sys.argv) > 2:
         sys.exit(cmd_aead_cswsh_graphql_audit(sys.argv[2]))

@@ -1,39 +1,56 @@
 #!/usr/bin/env python3
-"""Hook Nativo: UserPromptSubmit (HippoRAG 2 PPR Bitácora Routing + Defensa Prompt Injection)."""
-from pathlib import Path
+"""
+.aleph/hooks/user_prompt_submit.py
+Hook Nativo: UserPromptSubmit (Tier-0 VSA + BM25 Skill & Domain Routing).
+Clasifica el dominio técnico del prompt del usuario e identifica las compuertas formales requeridas.
+"""
+from __future__ import annotations
+
+import json
+import re
 import sys
-from typing import Any, Dict
+from typing import Any, Dict, List
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-if str(BASE_DIR) not in sys.path:
-    sys.path.insert(0, str(BASE_DIR))
 
-from aleph_core.engine import get_shared_omega_engine
-from aleph_core.security.aegis_shield import AegisShield
+DOMAIN_KEYWORDS: Dict[str, List[str]] = {
+    "NODE-01_FORMAL_SMT": ["z3", "smt", "prover", "invariant", "requires", "ensures", "ast", "bft", "raft"],
+    "NODE-02_UI_UX_DESIGN": ["css", "html", "react", "oklch", "apca", "bento", "layout", "wcag", "subgrid", "spring"],
+    "NODE-03_POSTGRES_DB": ["postgres", "sql", "supabase", "rls", "ddl", "index", "partition", "pgvector", "vacuum"],
+    "NODE-04_SECURITY_PQC": ["security", "oauth", "token", "hmac", "pqc", "taint", "ssrf", "xss", "injection"],
+    "NODE-05_PAGERANK_REPO": ["pagerank", "repomap", "kv-cache", "rust", "miri", "verus", "lean", "chebyshev"],
+}
 
 
 def evaluate_user_prompt(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Filtra intentos de secuestro de rol con AegisShield e inyecta reglas Bitácora pertinentes."""
-    prompt = str(payload.get("prompt") or payload.get("user_prompt") or "")
-    sec_report = AegisShield.scan_text(prompt)
-    if not sec_report.safe:
-        return {
-            "prompt_len": len(prompt),
-            "allowed": False,
-            "matched_rule_ids": [],
-            "security_findings": [f.rule_id for f in sec_report.findings],
-            "exit_code": 2,
-            "hook": "UserPromptSubmit",
-        }
+    prompt = str(payload.get("prompt", ""))
+    lower_prompt = prompt.lower()
+    matched_domains: List[str] = []
+    for domain, kws in DOMAIN_KEYWORDS.items():
+        if any(kw in lower_prompt for kw in kws):
+            matched_domains.append(domain)
+    if not matched_domains:
+        matched_domains.append("GENERAL_SOVEREIGN_ENGINEERING")
 
-    omega = get_shared_omega_engine()
-    ranked = omega.query_hipporag2_ppr(prompt or "general", top_k=5) if prompt.strip() else []
-    rule_ids = [item.get("canon_id") for item in ranked if item.get("canon_id")]
+    tokens = re.findall(r"[A-Za-z0-9_:\-\.]{3,}", prompt)
     return {
         "prompt_len": len(prompt),
-        "allowed": True,
-        "matched_rule_ids": rule_ids,
-        "security_findings": [],
+        "token_count": len(tokens),
+        "routed_domains": matched_domains,
         "exit_code": 0,
         "hook": "UserPromptSubmit",
     }
+
+
+def main() -> int:
+    raw = sys.stdin.read().strip() if not sys.stdin.isatty() else "{}"
+    try:
+        payload = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        payload = {"prompt": raw}
+    res = evaluate_user_prompt(payload)
+    sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    return int(res["exit_code"])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

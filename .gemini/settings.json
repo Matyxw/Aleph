@@ -2,7 +2,7 @@
   "contextFileName": [
     "GEMINI.md",
     ".antigravity/rules.md",
-    ".aleph/CLAUDE.md"
+    ".aleph/README.md"
   ],
   "mcpServers": {
     "el-aleph-sovereign": {
@@ -16,7 +16,7 @@
         "ALEPH_ALWAYS_ON": "1",
         "ALEPH_KERNEL_VERSION": "33.0.0"
       },
-      "trust": true,
+      "trust": false,
       "timeout": 30000
     }
   }

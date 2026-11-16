@@ -1,0 +1,14 @@
+{
+  "kernel_version": "20.1.0",
+  "protocol": "Kernel 3.0.0-OUTBOX",
+  "shard": "NODE-01 | Agente 1 — Owner General | Minuto :00 | Core Formal SMT/CEGIS, Concurrencia Determinista y Orquestación Maestra DAG",
+  "level": 342,
+  "mcp_tools_count": 354,
+  "unit_tests_count": 645,
+  "pass_rate_pct": 100.0,
+  "false_positive_rate_pct": 0.0,
+  "latest_rule": "REG-118",
+  "latest_prover": "CreditBasedBackpressureParksBoundedBufferAndChandyMisraHaasKnotFreeDAGProver",
+  "latest_mcp_tool": "aleph_prove_credit_backpressure_parks_bounded_buffer_and_cmh_dag",
+  "latest_cli_command": "credit-parks-cmh-dag"
+}

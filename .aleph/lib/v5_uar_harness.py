@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 Universal Agent Runtime (UAR) & Multi-Environment Execution Harness
-Ruta: .aleph/lib/v5_uar_harness.py
-Especificación: .aleph/ecosystem_skills_plan_v5/02_PLAN_MULTI_ENVIRONMENT_HARNESS.md
+Ruta: .aleph\\lib\\v5_uar_harness.py
+Especificación: .aleph\\ecosystem_skills_plan_v5\\02_PLAN_MULTI_ENVIRONMENT_HARNESS.md
 
 Doctrina: EL DEMIURGO - Ciclo Recursivo de Ejecución Asimétrica
 - Invocación Vectorizada Directa (TIV) - CWE-78 = 0.00%
@@ -31,26 +31,58 @@ from typing import Dict, List, Optional, Any, Union, Set, Tuple
 from abc import ABC, abstractmethod
 
 # --- Pydantic Dual v1/v2 Compatibility Shim ---
-from pydantic import BaseModel, Field
+from pydantic import BaseModel as _PydanticBaseModel, Field
 try:
     from pydantic import ConfigDict, field_validator, model_validator
+    BaseModel = _PydanticBaseModel
 except ImportError:
     from pydantic import validator, root_validator
+    import json as _shim_json
+
     def field_validator(*fields, **kwargs):
-        return validator(*fields, allow_reuse=True)
+        pre = kwargs.get("mode") == "before"
+        return validator(*fields, pre=pre, allow_reuse=True)
+
     def model_validator(mode="after"):
         def decorator(fn):
             import inspect
             sig = inspect.signature(fn)
             params = list(sig.parameters.keys())
             if params and params[0] == "self":
-                def adapted(cls, values):
-                    return values
-                adapted.__name__ = fn.__name__
-                return root_validator(pre=False, allow_reuse=True)(adapted)
+                fn._is_v2_self_validator = True
+                return fn
             return root_validator(pre=(mode == "before"), allow_reuse=True)(fn)
         return decorator
+
     ConfigDict = lambda **kw: dict(**kw)
+
+    class BaseModel(_PydanticBaseModel):
+        def __init__(self, **data):
+            super().__init__(**data)
+            for attr_name in dir(self.__class__):
+                attr = getattr(self.__class__, attr_name, None)
+                if callable(attr) and getattr(attr, "_is_v2_self_validator", False):
+                    attr(self)
+
+        def model_dump(self, **kwargs):
+            return self.dict(**kwargs)
+
+        def model_dump_json(self, indent=None, **kwargs):
+            return _shim_json.dumps(self.dict(**kwargs), indent=indent, default=str, ensure_ascii=False)
+
+        @classmethod
+        def model_validate(cls, obj, **kwargs):
+            if isinstance(obj, cls):
+                return obj
+            return cls.parse_obj(obj)
+
+        @classmethod
+        def model_validate_json(cls, json_str, **kwargs):
+            return cls.parse_raw(json_str)
+
+        @property
+        def model_fields_set(self):
+            return getattr(self, "__fields_set__", set())
 # ----------------------------------------------
 
 
@@ -1162,11 +1194,7 @@ def main():
     parser.add_argument("--sync", action="store_true", help="Transpila CANONICAL_RULES.json hacia todos los targets")
     parser.add_argument("--check-drift", action="store_true", help="Verifica si existen derivas de reglas en el repositorio")
     parser.add_argument("--workspace", default=str(Path.cwd()), help="Directorio raíz del workspace")
-    parser.add_argument(
-        "--manifest",
-        default=str(Path(__file__).resolve().parent.parent / "rules" / "CANONICAL_RULES.json"),
-        help="Ruta al manifest canónico",
-    )
+    parser.add_argument("--manifest", default=str(Path(__file__).resolve().parent.parent / "rules" / "CANONICAL_RULES.json"), help="Ruta al manifest canónico")
 
     args = parser.parse_args()
     transpiler = UniversalRuleTranspiler(args.workspace)

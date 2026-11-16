@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 r"""
-.aleph/lib/v5_sentinel_tooling.py
+.aleph\lib\v5_sentinel_tooling.py
 Sovereign Sentinel Tooling & Protocols Core (V5-06)
 Component: El Aleph - Subsistema Soberano de Herramientas, Protocolos, Oráculos Centinela y ConPTY
 

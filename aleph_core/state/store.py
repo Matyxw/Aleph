@@ -11,13 +11,13 @@ Implementa SQLite con WAL, mutaciones atómicas en 2 fases en disco y tablas par
 """
 import os
 import sqlite3
+import threading
 import json
 import time
 import zlib
 import base64
 import uuid
 import hashlib
-import tempfile
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 from dataclasses import dataclass, field
@@ -53,31 +53,39 @@ class StateStore:
     def __init__(self, db_path: Path = DB_PATH):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._db_lock = threading.RLock()
+        self._wal_initialized = False
         self._init_db()
 
     @contextmanager
     def _connection(self):
-        """Context manager que asegura apertura con WAL y cierre determinista de handles (crucial en Windows/Linux)."""
-        conn = sqlite3.connect(str(self.db_path), timeout=SQLITE_TIMEOUT_SEC)
-        conn.row_factory = sqlite3.Row
-        try:
-            res = conn.execute("PRAGMA journal_mode = WAL;").fetchone()
-            if not res or str(res[0]).lower() != "wal":
-                conn.execute("PRAGMA journal_mode = MEMORY;")
-        except sqlite3.OperationalError:
-            conn.close()
-            import tempfile
-            fallback = Path(tempfile.gettempdir()) / self.db_path.name
-            self.db_path = fallback
-            conn = sqlite3.connect(str(self.db_path), timeout=SQLITE_TIMEOUT_SEC)
+        """Context manager que asegura apertura con WAL, busy_timeout y cierre determinista de handles."""
+        with self._db_lock:
+            conn = sqlite3.connect(str(self.db_path), timeout=SQLITE_TIMEOUT_SEC, check_same_thread=False)
             conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode = WAL;")
-        conn.execute("PRAGMA synchronous = NORMAL;")
-        conn.execute("PRAGMA foreign_keys = ON;")
-        try:
-            yield conn
-        finally:
-            conn.close()
+            if not self._wal_initialized:
+                try:
+                    res = conn.execute("PRAGMA journal_mode = WAL;").fetchone()
+                    if not res or str(res[0]).lower() != "wal":
+                        conn.execute("PRAGMA journal_mode = MEMORY;")
+                    conn.execute("PRAGMA wal_autocheckpoint = 1000;")
+                except sqlite3.OperationalError:
+                    conn.close()
+                    import tempfile
+                    fallback = Path(tempfile.gettempdir()) / self.db_path.name
+                    self.db_path = fallback
+                    conn = sqlite3.connect(str(self.db_path), timeout=SQLITE_TIMEOUT_SEC, check_same_thread=False)
+                    conn.row_factory = sqlite3.Row
+                    conn.execute("PRAGMA journal_mode = WAL;")
+                    conn.execute("PRAGMA wal_autocheckpoint = 1000;")
+                self._wal_initialized = True
+            conn.execute(f"PRAGMA busy_timeout = {int(SQLITE_TIMEOUT_SEC * 1000)};")
+            conn.execute("PRAGMA synchronous = NORMAL;")
+            conn.execute("PRAGMA foreign_keys = ON;")
+            try:
+                yield conn
+            finally:
+                conn.close()
 
     def _init_db(self):
         with self._connection() as conn:
@@ -270,23 +278,13 @@ class StateStore:
     @staticmethod
     def atomic_write_file(target_path: Path, content: str) -> None:
         target_path = Path(target_path)
+        temp_path = target_path.with_suffix(target_path.suffix + f".tmp_{int(time.time()*1000)}_{os.getpid()}")
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(
-            dir=str(target_path.parent),
-            prefix=f".{target_path.name}.",
-            suffix=".tmp",
-        )
-        temp_path = Path(tmp_name)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(content)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, target_path)
-        except BaseException:
-            if temp_path.exists():
-                temp_path.unlink()
-            raise
+        with open(temp_path, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, target_path)
 
     # Métodos nativos de Checkpointing Jerárquico y Compresión Contextual
     def create_session_checkpoint(

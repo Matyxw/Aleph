@@ -2,7 +2,7 @@
 
 **Sistema:** El Aleph v5.0 — Autonomous Epistemic Operating System (AEOS)  
 **Documento ID:** `ALEPH-ENG-V5-PLAN-10`  
-**Ruta de Implementación:** `C:\Users\Lucas cardozo\.aleph\ecosystem_skills_plan_v5\10_PLAN_SOVEREIGN_ALEPH_ECOSYSTEM_SYNTHESIS.md`  
+**Ruta de Implementación:** `.aleph\ecosystem_skills_plan_v5\10_PLAN_SOVEREIGN_ALEPH_ECOSYSTEM_SYNTHESIS.md`  
 **Autor:** Subagente Planificador 10 — Estratega de Síntesis Universal del Ecosistema Aleph  
 **Destinatario:** Subagente Principal / Swarm Council / El Demiurgo / El Arquitecto  
 **Clasificación de Seguridad:** SOBERANÍA ABSOLUTA — GRADO MILITAR POST-CUÁNTICO (FIPS 203 / FIPS 204)  
@@ -28,7 +28,7 @@ La Gran Síntesis fusiona de manera indisoluble dos mundos previamente desconect
   - Sistema de Archivos Virtual en RAM (**VFS en RAM**) asignado mediante llamadas win32 `VirtualAlloc` a nivel de páginas GPA, garantizando **cero escrituras en el disco SSD** durante la fase exploratoria y de pruebas.
   - Seguridad Criptográfica Post-Cuántica basada en los estándares federales de EE.UU. **FIPS 203 (ML-KEM-768)** para encapsulamiento híbrido de claves y **FIPS 204 (ML-DSA-65)** para firmas digitales inmutables, selladas en hardware mediante **TPM 2.0 (PCR 15 y 16)** y enclaves **Windows VBS (VTL-1)**.
 * **El Ecosistema Masivo de Skills y Herramientas:**
-  - Ingesta, normalización y gobierno de las **1,852 skills** catalogadas en `C:\Users\Lucas cardozo\.agents\skills` (siguiendo el estándar abierto `agentskills.io`).
+  - Ingesta, normalización y gobierno de las **1,852 skills** catalogadas en `./.agents\skills` (siguiendo el estándar abierto `agentskills.io`).
   - Multiplexación bidireccional transparente de protocolos: **MCP (Model Context Protocol)**, **LSP (Language Server Protocol)** y **CDP (Chrome DevTools Protocol)**.
   - Orquestación agnóstica de entornos frontend: **Antigravity CLI / Manager**, **Claude Code CLI**, **Cursor** y terminales headless.
 
@@ -509,7 +509,7 @@ Este script constituye el corazón de integración en tiempo de ejecución del s
 # -*- coding: utf-8 -*-
 """
 El Aleph v5.0 - AEOS Universal Host Multiplexer & Zero-Token Router Engine
-Ruta: C:\\Users\\Lucas cardozo\\.aleph\\scripts\\aeos_multiplexer_bridge.py
+Ruta: .aleph\\scripts\\aeos_multiplexer_bridge.py
 Doctrina: EL DEMIURGO - Síntesis Total de Núcleo Nativo y Ecosistema de Skills
 """
 
@@ -527,8 +527,8 @@ from typing import Dict, List, Optional, Tuple, Any
 # ============================================================================
 # CONFIGURACIÓN DE RUTAS DEL SISTEMA SOBERANO
 # ============================================================================
-ALEPH_HOME = Path(r"C:\Users\Lucas cardozo\.aleph")
-SKILLS_DIR = Path(r"C:\Users\Lucas cardozo\.agents\skills")
+ALEPH_HOME = Path(r".aleph")
+SKILLS_DIR = Path(r"./.agents\skills")
 V4_ENGINE_DIR = ALEPH_HOME / "v4_engine"
 NATIVE_DLL_PATH = ALEPH_HOME / "native" / "aleph_core" / "target" / "release" / "aleph_core.dll"
 

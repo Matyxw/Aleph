@@ -25,15 +25,25 @@ Pruebas exhaustivas y deterministas para:
 import math
 import sys
 from pathlib import Path
+import unittest
+import contextlib
+import re as _re
 try:
     import pytest
-    _raises = pytest.raises
 except ImportError:
-    import unittest as _unittest
-    _tc = _unittest.TestCase()
+    class _PytestShim:
+        @staticmethod
+        @contextlib.contextmanager
+        def raises(exc_type, match=None):
+            try:
+                yield
+            except exc_type as exc:
+                if match is not None and not _re.search(match, str(exc)):
+                    raise AssertionError(f"Regex {match!r} did not match {str(exc)!r}")
+                return
+            raise AssertionError(f"Did not raise {exc_type}")
+    pytest = _PytestShim()
 
-    def _raises(exc_type, match=None):  # type: ignore[misc]
-        return _tc.assertRaisesRegex(exc_type, match) if match else _tc.assertRaises(exc_type)
 
 # Asegurar importación de la librería de Aleph
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
@@ -59,7 +69,7 @@ from aleph_kinetic_ode import (
 # 1. PRUEBAS DE SIMULACIÓN CINEMÁTICA ODE Y RESORTES ARMÓNICOS
 # ============================================================================
 
-class TestKineticODESimulation:
+class TestKineticODESimulation(unittest.TestCase):
     """Certificación matemática de la simulación de osciladores armónicos de 2do orden."""
 
     def test_spring_canonical_profiles_exist(self):
@@ -165,7 +175,7 @@ class TestKineticODESimulation:
         assert math.isclose(spring.damping_ratio, 0.707, rel_tol=1e-5)
         assert spring.mass == 2.0
 
-        with _raises(ValueError, match="zeta no puede ser negativo"):
+        with pytest.raises(ValueError, match="zeta no puede ser negativo"):
             SpringPhysicsODE.from_zeta(zeta=-0.1)
 
     def test_overdamped_regime(self):
@@ -184,7 +194,7 @@ class TestKineticODESimulation:
 # 2. PRUEBAS DE COMPILACIÓN A CSS linear(...)
 # ============================================================================
 
-class TestCSSLinearCompilation:
+class TestCSSLinearCompilation(unittest.TestCase):
     """Verificación de la generación de CSS linear(...) conforme a CSS Easing Level 2."""
 
     def test_linear_css_syntax_for_canonical_profiles(self):
@@ -249,7 +259,7 @@ class TestCSSLinearCompilation:
 # 3. PRUEBAS DE LA MATRIZ HÁPTICA FORMAL DE 7 ESTADOS
 # ============================================================================
 
-class TestHapticStateMatrix:
+class TestHapticStateMatrix(unittest.TestCase):
     """Certificación de la Matriz Háptica de 7 Estados de Interacción."""
 
     def test_seven_states_enumeration(self):
@@ -284,7 +294,7 @@ class TestHapticStateMatrix:
                 InteractionState.LOADING_PENDING,
             ]
         }
-        with _raises(ValueError, match="Matriz de Interacción incompleta"):
+        with pytest.raises(ValueError, match="Matriz de Interacción incompleta"):
             InteractionStateMatrix(states=incomplete_states)
 
     def test_canonical_button_matrix_properties(self):
@@ -377,7 +387,7 @@ class TestHapticStateMatrix:
 # 4. PRUEBAS DEL AUDITOR Y LINTER SEMÁNTICO ANTI-SLOP
 # ============================================================================
 
-class TestSemanticAntiSlopAuditor:
+class TestSemanticAntiSlopAuditor(unittest.TestCase):
     """Certificación de las reglas de auditoría semántica y rendimiento GPU."""
 
     # -------------------------------------------------------------------------
@@ -570,3 +580,7 @@ class TestSemanticAntiSlopAuditor:
         result = InteractionSemanticsValidator.audit_compiled_bundle(full_html, poisoned_css)
         assert result["certified"] is False
         assert any(i["rule_id"] == "ANTI_SLOP_BAN_TRANSITION_ALL" for i in result["issues"])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,18 +1,25 @@
 ================================================================================
-EL ALEPH v33.0.0 — INICIO RÁPIDO (GOOGLE ANTIGRAVITY ALWAYS-ON + BITÁCORA NATIVA)
+EL ALEPH v33.0.0 (EDICIÓN SOTA) — INICIO RÁPIDO
 ================================================================================
 
-1. VERIFICACIÓN INMEDIATA DEL KERNEL Y LA BITÁCORA INTERNA (350 REGLAS):
-   $ python3 aleph_cli.py test
-   $ python3 aleph_cli.py bitacora-status
-   $ python3 aleph_cli.py omega-self-improve
+1. INSTALAR Y EJECUTAR LA SUITE COMPLETA (1.378 TESTS, 0 SALTADOS):
+   $ pip install -e .
+   $ python3 aleph_cli.py test              # 1.270 tests core + 108 tests .aleph
+   $ python3 aleph_cli.py bitacora-status   # 350 reglas, Merkle SHA-256 + Recall@5
 
-2. ACTIVACIÓN PERMANENTE (ALWAYS-ON) EN GOOGLE ANTIGRAVITY:
-   - El archivo .antigravity/mcp_config.json registra el servidor MCP soberano
-     con las 730 herramientas formales y la variable ALEPH_BITACORA_VAULT_ALWAYS_ON=1.
-   - Los hooks .aleph/hooks/aleph_antigravity_omega_hook.py interceptan cada
-     turno pre-ejecución (inyectando las reglas relevantes de las 350 mediante
-     HippoRAG 2 PPR) y post-ejecución (calculando sorpresa epistémica de Titans
-     y consolidando nuevas reglas en .aleph/BITACORA_MASTER_VAULT_V33.json con
-     0.0% de olvido catastrófico).
+2. AUDITORÍA DE HIGIENE Y CERTIFICADO CRIPTOGRÁFICO (.aleph-cert.json):
+   $ python3 .aleph/scripts/scan_cleanliness.py
+
+3. USO CON AGENTES (Antigravity / Gemini / Claude Code vía MCP stdio):
+   - .antigravity/mcp_config.json y .mcp.json registran el servidor MCP por stdio.
+   - Solo 9 tools de solo-lectura se auto-aprueban; el resto solicita confirmación.
+   - Instalación global opcional en el perfil del usuario:
+       $ python3 aleph_cli.py antigravity-always-on --install-user-home
+
+4. EVALUACIÓN EXPERIMENTAL A/B CON PRUEBA EXACTA DE MCNEMAR:
+   $ python3 -m ab_eval.ab_harness --help
+
+5. DAEMON HTTP AUTENTICADO (opcional):
+   $ python3 aleph_cli.py mcp-http
+   Exige cabecera `Authorization: Bearer <token>` (.aleph/.mcp_token o ALEPH_MCP_TOKEN).
 ================================================================================

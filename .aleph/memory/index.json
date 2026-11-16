@@ -1,0 +1,145 @@
+{
+  "version": "1.0.0",
+  "last_synced": "2026-10-13T01:13:03Z",
+  "entries_count": 6,
+  "entries": [
+    {
+      "id": "ant-20261012-001",
+      "path": "anti_patterns/sqlite_locking_on_ntfs.md",
+      "filename": "sqlite_locking_on_ntfs.md",
+      "category": "anti_patterns",
+      "title": "Uso de SQLite Concurrente en Windows 11 NTFS sin Isolation",
+      "tags": [
+        "sqlite",
+        "locking",
+        "windows11",
+        "ntfs",
+        "sharing_violation",
+        "error_0x20"
+      ],
+      "status": "VERIFIED",
+      "epistemic_level": "EMPIRICAL",
+      "author": "Aleph Vault Engineer",
+      "verified_by": "09_git_memory_vault.md",
+      "tokens_est": 345,
+      "mtime": 1791781271.5951507,
+      "created_at": "2026-10-12T04:40:00Z",
+      "updated_at": "2026-10-12T04:40:00Z"
+    },
+    {
+      "id": "dec-20261012-001",
+      "path": "decisions/0001_storage_engine_selection.md",
+      "filename": "0001_storage_engine_selection.md",
+      "category": "decisions",
+      "title": "Adopción de os.replace para Persistencia Lock-Free",
+      "tags": [
+        "storage",
+        "concurrency",
+        "windows11",
+        "ntfs",
+        "os.replace",
+        "aider",
+        "ecc"
+      ],
+      "status": "VERIFIED",
+      "epistemic_level": "AXIOMATIC",
+      "author": "Plan Architect 09",
+      "verified_by": "test_vault_engine.py (exit_code=0)",
+      "tokens_est": 527,
+      "mtime": 1791781271.5581927,
+      "created_at": "2026-10-12T04:30:00Z",
+      "updated_at": "2026-10-12T04:30:00Z"
+    },
+    {
+      "id": "dec-20261012-002",
+      "path": "decisions/0002_out_of_band_governance_gate.md",
+      "filename": "0002_out_of_band_governance_gate.md",
+      "category": "decisions",
+      "title": "Interceptor Pre-Ejecución y Tickets Out-of-Band para Acciones Irreversibles",
+      "tags": [
+        "governance",
+        "security",
+        "irreversible_actions",
+        "sha256_tickets",
+        "demiurgo",
+        "exit_code_42"
+      ],
+      "status": "VERIFIED",
+      "epistemic_level": "AXIOMATIC",
+      "author": "Security Gate Engineer",
+      "verified_by": "test_governance_gate.py (23/23 tests pass, exit_code=0)",
+      "tokens_est": 663,
+      "mtime": 1791781548.778103,
+      "created_at": "2026-10-12T05:05:00Z",
+      "updated_at": "2026-10-12T05:05:00Z"
+    },
+    {
+      "id": "dom-20261012-001",
+      "path": "domain/task_lifecycle_invariants.md",
+      "filename": "task_lifecycle_invariants.md",
+      "category": "domain",
+      "title": "Invariantes del Ciclo de Vida de Tareas en Aleph Engine",
+      "tags": [
+        "domain",
+        "lifecycle",
+        "tasks",
+        "invariants",
+        "state_machine"
+      ],
+      "status": "VERIFIED",
+      "epistemic_level": "AXIOMATIC",
+      "author": "Aleph Domain Architect",
+      "verified_by": "01_lifecycle_orchestrator.md",
+      "tokens_est": 353,
+      "mtime": 1791781271.6117256,
+      "created_at": "2026-10-12T04:45:00Z",
+      "updated_at": "2026-10-12T04:45:00Z"
+    },
+    {
+      "id": "pat-20261012-001",
+      "path": "patterns/win11_atomic_file_replacement.md",
+      "filename": "win11_atomic_file_replacement.md",
+      "category": "patterns",
+      "title": "Escritura Atómica en Windows NTFS con os.replace y fsync",
+      "tags": [
+        "atomic_write",
+        "ntfs",
+        "windows11",
+        "fsync",
+        "os.replace",
+        "lock_free"
+      ],
+      "status": "VERIFIED",
+      "epistemic_level": "EMPIRICAL",
+      "author": "Aleph Vault Engineer",
+      "verified_by": "test_vault_engine.py",
+      "tokens_est": 440,
+      "mtime": 1791781271.5741377,
+      "created_at": "2026-10-12T04:35:00Z",
+      "updated_at": "2026-10-12T04:35:00Z"
+    },
+    {
+      "id": "pat-20261013-004",
+      "path": "patterns/win11_job_object_containment_and_rollback.md",
+      "filename": "win11_job_object_containment_and_rollback.md",
+      "category": "patterns",
+      "title": "Tier 1 Win32 Job Object Containment & Instant Rollback Oracle",
+      "tags": [
+        "job_objects",
+        "containment",
+        "windows11",
+        "rollback",
+        "path_traversal",
+        "sandbox"
+      ],
+      "status": "VERIFIED",
+      "epistemic_level": "EMPIRICAL",
+      "author": "Builder Subagent 04",
+      "verified_by": "test_win11_sandbox_containment.py",
+      "tokens_est": 654,
+      "mtime": 1791853954.889166,
+      "created_at": "2026-10-13T01:15:00Z",
+      "updated_at": "2026-10-13T01:15:00Z"
+    }
+  ]
+}

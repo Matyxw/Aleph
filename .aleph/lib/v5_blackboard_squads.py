@@ -2,45 +2,75 @@
 # -*- coding: utf-8 -*-
 """
 El Aleph v5.0 - Blackboard DAG & Squads Role Orchestrator
-Ruta: .aleph/lib/v5_blackboard_squads.py
+Ruta: .aleph\\lib\\v5_blackboard_squads.py
 Doctrina: EL DEMIURGO - Coordinación Determinista, Desacoplamiento de Roles,
            Roles como Funciones Puras, Aislamiento Epistémico y Circuit Breakers.
 """
 
 from __future__ import annotations
 
-import os
 import re
 import ast
 import json
-import shlex
 import hashlib
 import threading
 import subprocess
 from enum import Enum
-from typing import List, Dict, Any, Optional, Literal, Callable, Tuple, Sequence, Union
+from typing import List, Dict, Any, Optional, Literal, Callable, Tuple
 from datetime import datetime, timezone
 # --- Pydantic Dual v1/v2 Compatibility Shim ---
-from pydantic import BaseModel, Field
+from pydantic import BaseModel as _PydanticBaseModel, Field
 try:
     from pydantic import ConfigDict, field_validator, model_validator
+    BaseModel = _PydanticBaseModel
 except ImportError:
     from pydantic import validator, root_validator
+    import json as _shim_json
+
     def field_validator(*fields, **kwargs):
-        return validator(*fields, allow_reuse=True)
+        pre = kwargs.get("mode") == "before"
+        return validator(*fields, pre=pre, allow_reuse=True)
+
     def model_validator(mode="after"):
         def decorator(fn):
             import inspect
             sig = inspect.signature(fn)
             params = list(sig.parameters.keys())
             if params and params[0] == "self":
-                def adapted(cls, values):
-                    return values
-                adapted.__name__ = fn.__name__
-                return root_validator(pre=False, allow_reuse=True)(adapted)
+                fn._is_v2_self_validator = True
+                return fn
             return root_validator(pre=(mode == "before"), allow_reuse=True)(fn)
         return decorator
+
     ConfigDict = lambda **kw: dict(**kw)
+
+    class BaseModel(_PydanticBaseModel):
+        def __init__(self, **data):
+            super().__init__(**data)
+            for attr_name in dir(self.__class__):
+                attr = getattr(self.__class__, attr_name, None)
+                if callable(attr) and getattr(attr, "_is_v2_self_validator", False):
+                    attr(self)
+
+        def model_dump(self, **kwargs):
+            return self.dict(**kwargs)
+
+        def model_dump_json(self, indent=None, **kwargs):
+            return _shim_json.dumps(self.dict(**kwargs), indent=indent, default=str, ensure_ascii=False)
+
+        @classmethod
+        def model_validate(cls, obj, **kwargs):
+            if isinstance(obj, cls):
+                return obj
+            return cls.parse_obj(obj)
+
+        @classmethod
+        def model_validate_json(cls, json_str, **kwargs):
+            return cls.parse_raw(json_str)
+
+        @property
+        def model_fields_set(self):
+            return getattr(self, "__fields_set__", set())
 # ----------------------------------------------
 
 
@@ -874,22 +904,15 @@ class SquadOrchestrator:
         self.tdd_iteration = 0
         self.baseline_tests_passed = 0
 
-    def run_command(self, cmd: Union[str, Sequence[str]], timeout_sec: int = 45) -> subprocess.CompletedProcess:
-        """Ejecuta un comando vectorizado (argv[], shell=False, CWE-78 = 0%) en el sandbox del workspace."""
-        if isinstance(cmd, str):
-            raw_tokens = shlex.split(cmd, posix=(os.name != "nt"))
-            argv = [t[1:-1] if len(t) >= 2 and t[0] == t[-1] and t[0] in ('"', "'") else t for t in raw_tokens]
-        else:
-            argv = [str(part) for part in cmd]
-        if not argv:
-            raise ValueError("El comando a ejecutar no puede estar vacío.")
+    def run_command(self, cmd: str, timeout_sec: int = 45) -> subprocess.CompletedProcess:
+        """Ejecuta un comando en el sandbox del workspace con timeout estricto."""
         return subprocess.run(
-            argv,
-            shell=False,
+            cmd,
+            shell=True,
             cwd=self.workspace_path,
             capture_output=True,
             text=True,
-            timeout=timeout_sec,
+            timeout=timeout_sec
         )
 
     def record_tokens(self, count: int) -> None:

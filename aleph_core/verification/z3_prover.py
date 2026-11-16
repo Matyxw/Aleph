@@ -1,3 +1,16 @@
+import json
+import math
+import re
+import hashlib
+import time
+import uuid
+import ast
+import base64
+from dataclasses import dataclass, field, asdict
+from typing import List, Dict, Any, Optional, Set, Tuple, Union
+import hashlib
+import uuid
+import re
 """
 aleph_core/verification/z3_prover.py
 Motor de Verificación Formal SMT, Demostrador de Teoremas y Motor de Parches Semánticos AST (v2.5.0).
@@ -8,21 +21,14 @@ Integra:
 4. Verificación de terminación de bucles (@loop_variant / @loop_invariant)
 5. SemanticPatchEngine: Reemplazo quirúrgico en AST con verificación diferencial anti-regresión y fsync atómico
 """
-import ast
-import base64
-import difflib
-import hashlib
-import itertools
-import json
-import math
-import re
-import time
-import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from enum import Enum
+import ast
+import difflib
+import itertools
+import time
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Set, Tuple, Union, Callable
-
+from typing import Dict, List, Any, Optional, Tuple, Callable
 from aleph_core.verification.ast_smt import ASTContractExtractor, SMTExpressionBuilder, HAS_Z3, z3
 from aleph_core.verification.contracts import requires, ensures, invariant, loop_invariant, loop_variant
 from aleph_core.state.store import StateStore
@@ -79,6 +85,10 @@ def _not_expr(expr: Any) -> Any:
         return z3.Not(expr)
     return ("NOT", expr)
 
+def _const_bool(value: bool) -> Any:
+    """Constante booleana del backend activo (Z3 BoolVal o tupla simbólica del fallback)."""
+    return z3.BoolVal(bool(value)) if HAS_Z3 else ("CONST", bool(value))
+
 def _eq_expr(left: Any, right: Any) -> Any:
     if HAS_Z3:
         return (left == right)
@@ -106,10 +116,10 @@ class FunctionVCGen(ast.NodeVisitor):
         self.path_conditions: List[Any] = []
         self.goals: List[VerificationGoal] = []
         self.precondition_exprs: List[Any] = []
+        self.unparsed_preconditions: List[Tuple[str, str]] = []
         self.postcondition_strs: List[str] = []
         self.invariant_strs: List[str] = []
         self.return_exprs: List[Tuple[Any, Any]] = []
-        self._contract_warnings: List[str] = []
         self._init_parameters()
 
     def _get_current_var_name(self, name: str) -> str:
@@ -133,10 +143,10 @@ class FunctionVCGen(ast.NodeVisitor):
         for pre_s in pre_strs:
             try:
                 expr = self.builder.parse_expr_string(pre_s, resolver=lambda n: n)
-                if expr is not None:
-                    self.precondition_exprs.append(expr)
-            except (SyntaxError, NotImplementedError, ValueError) as exc:
-                self._contract_warnings.append(f"Contrato @requires no compilado ({pre_s!r}): {exc}")
+                self.precondition_exprs.append(expr)
+            except Exception as exc:
+                # No se descarta en silencio: una precondición ignorada vuelve la prueba más débil.
+                self.unparsed_preconditions.append((pre_s, f"{type(exc).__name__}: {exc}"))
         self.postcondition_strs = post_strs
         self.invariant_strs = inv_strs
 
@@ -154,6 +164,8 @@ class FunctionVCGen(ast.NodeVisitor):
                 source_line=node.lineno
             ))
         if self.use_bitvectors:
+            max_bv = (1 << (self.bv_bits - 1)) - 1
+            min_bv = -(1 << (self.bv_bits - 1))
             left_expr = self.builder.compile_node(node.left)
             right_expr = self.builder.compile_node(node.right)
             if isinstance(node.op, ast.Add):
@@ -165,8 +177,8 @@ class FunctionVCGen(ast.NodeVisitor):
                 else:
                     sum_expr = ("BINOP", "+", left_expr, right_expr)
                     safety_pred = ("BOOLOP", "AND", [
-                        ("CMP", "<=", sum_expr, ("CONST", 2147483647)),
-                        ("CMP", ">=", sum_expr, ("CONST", -2147483648))
+                        ("CMP", "<=", sum_expr, ("CONST", max_bv)),
+                        ("CMP", ">=", sum_expr, ("CONST", min_bv))
                     ])
                 pc = _and_exprs(self.path_conditions)
                 self.goals.append(VerificationGoal(
@@ -177,14 +189,35 @@ class FunctionVCGen(ast.NodeVisitor):
                     path_condition=pc,
                     source_line=node.lineno
                 ))
+            elif isinstance(node.op, ast.Sub):
+                if HAS_Z3:
+                    safety_pred = z3.And(
+                        z3.BVSubNoOverflow(left_expr, right_expr),
+                        z3.BVSubNoUnderflow(left_expr, right_expr, True)
+                    )
+                else:
+                    sub_expr = ("BINOP", "-", left_expr, right_expr)
+                    safety_pred = ("BOOLOP", "AND", [
+                        ("CMP", "<=", sub_expr, ("CONST", max_bv)),
+                        ("CMP", ">=", sub_expr, ("CONST", min_bv))
+                    ])
+                pc = _and_exprs(self.path_conditions)
+                self.goals.append(VerificationGoal(
+                    goal_id=f"overflow_sub_{node.lineno}_{node.col_offset}",
+                    defect_type=SafetyDefectType.INTEGER_OVERFLOW,
+                    description=f"Demostración de ausencia de overflow/underflow en resta (Línea {node.lineno})",
+                    safety_predicate=safety_pred,
+                    path_condition=pc,
+                    source_line=node.lineno
+                ))
             elif isinstance(node.op, ast.Mult):
                 if HAS_Z3:
                     safety_pred = z3.BVMulNoOverflow(left_expr, right_expr, True)
                 else:
                     mul_expr = ("BINOP", "*", left_expr, right_expr)
                     safety_pred = ("BOOLOP", "AND", [
-                        ("CMP", "<=", mul_expr, ("CONST", 2147483647)),
-                        ("CMP", ">=", mul_expr, ("CONST", -2147483648))
+                        ("CMP", "<=", mul_expr, ("CONST", max_bv)),
+                        ("CMP", ">=", mul_expr, ("CONST", min_bv))
                     ])
                 pc = _and_exprs(self.path_conditions)
                 self.goals.append(VerificationGoal(
@@ -195,6 +228,25 @@ class FunctionVCGen(ast.NodeVisitor):
                     path_condition=pc,
                     source_line=node.lineno
                 ))
+        self.generic_visit(node)
+
+    def visit_UnaryOp(self, node: ast.UnaryOp):
+        if self.use_bitvectors and isinstance(node.op, ast.USub):
+            min_bv = -(1 << (self.bv_bits - 1))
+            op_expr = self.builder.compile_node(node.operand)
+            if HAS_Z3:
+                safety_pred = z3.BVSNegNoOverflow(op_expr)
+            else:
+                safety_pred = ("CMP", "!=", op_expr, ("CONST", min_bv))
+            pc = _and_exprs(self.path_conditions)
+            self.goals.append(VerificationGoal(
+                goal_id=f"overflow_neg_{node.lineno}_{node.col_offset}",
+                defect_type=SafetyDefectType.INTEGER_OVERFLOW,
+                description=f"Demostración de ausencia de overflow en negación unaria -INT_MIN (Línea {node.lineno})",
+                safety_predicate=safety_pred,
+                path_condition=pc,
+                source_line=node.lineno
+            ))
         self.generic_visit(node)
 
     def visit_Attribute(self, node: ast.Attribute):
@@ -222,7 +274,7 @@ class FunctionVCGen(ast.NodeVisitor):
             if isinstance(node.value, ast.Name):
                 d_name = node.value.id
                 k_name = node.slice.value
-                has_key_var = self.builder.get_var(f"{d_name}_has_{k_name}", is_bool=True)
+                has_key_var = self.builder.get_var(f"{d_name}_has_{k_name}")
                 safety_pred = (has_key_var == z3.BoolVal(True)) if HAS_Z3 else ("CMP", "==", has_key_var, ("CONST", True))
                 pc = _and_exprs(self.path_conditions)
                 self.goals.append(VerificationGoal(
@@ -237,9 +289,19 @@ class FunctionVCGen(ast.NodeVisitor):
             return
 
         idx_expr = self.builder.compile_node(node.slice)
-        if isinstance(node.value, ast.Name):
-            arr_name = node.value.id
-            arr_len = self.builder.get_var(f"{arr_name}_len")
+        if isinstance(node.value, (ast.Name, ast.Subscript)):
+            if isinstance(node.value, ast.Name):
+                arr_name = node.value.id
+                arr_len = self.builder.get_var(f"{arr_name}_len")
+            else:
+                base_node = node.value
+                depth = 0
+                while isinstance(base_node, ast.Subscript):
+                    depth += 1
+                    base_node = base_node.value
+                root_name = base_node.id if isinstance(base_node, ast.Name) else "matrix"
+                arr_name = f"{root_name}_dim{depth}"
+                arr_len = self.builder.get_var(f"{root_name}_inner_len" if depth == 1 else f"{root_name}_dim{depth}_len")
             if HAS_Z3:
                 safety_pred = z3.And(idx_expr >= 0, idx_expr < arr_len)
             else:
@@ -342,11 +404,8 @@ class FunctionVCGen(ast.NodeVisitor):
                                 if isinstance(elt, ast.Name):
                                     body_targets.add(elt.id)
 
-        false_const = z3.BoolVal(False) if HAS_Z3 else ("CONST", False)
-        true_const = z3.BoolVal(True) if HAS_Z3 else ("CONST", True)
-
         if cond_vars and not (cond_vars & body_targets):
-            safety_pred = _eq_expr(cond_expr, false_const)
+            safety_pred = _eq_expr(cond_expr, _const_bool(False))
             self.goals.append(VerificationGoal(
                 goal_id=f"loop_term_{node.lineno}_{node.col_offset}",
                 defect_type=SafetyDefectType.LOOP_TERMINATION,
@@ -357,11 +416,11 @@ class FunctionVCGen(ast.NodeVisitor):
             ))
 
         orig_pc = list(self.path_conditions)
-        self.path_conditions.append(_eq_expr(cond_expr, true_const))
+        self.path_conditions.append(_eq_expr(cond_expr, _const_bool(True)))
         for stmt in node.body:
             self.visit(stmt)
         self.path_conditions = list(orig_pc)
-        self.path_conditions.append(_eq_expr(cond_expr, false_const))
+        self.path_conditions.append(_eq_expr(cond_expr, _const_bool(False)))
 
     def visit_For(self, node: ast.For):
         if isinstance(node.target, ast.Name):
@@ -458,7 +517,7 @@ class FunctionVCGen(ast.NodeVisitor):
                 self.var_versions = merged_versions
 
 class SymbolicRelationalSolver:
-    BASE_BOUNDARIES = [0, 1, -1, 2, -2, 2147483647, -2147483648]
+    BASE_BOUNDARIES = [0, 1, -1, 2, -2, 127, -128, 32767, -32768, 2147483647, -2147483648]
 
     @staticmethod
     def eval_expr(expr: Any, env: Dict[str, Any]) -> Any:
@@ -924,18 +983,23 @@ class SemanticPatchEngine:
                     )
                 )
 
-        target_node: Optional[ast.FunctionDef] = None
-        for node in orig_tree.body:
-            if isinstance(node, ast.FunctionDef) and node.name == target_function_name:
-                target_node = node
-                break
-        if target_node is None:
-            for node in ast.walk(orig_tree):
-                if isinstance(node, ast.FunctionDef) and node.name == target_function_name:
-                    target_node = node
-                    break
+        class FunctionReplacer(ast.NodeTransformer):
+            def __init__(self, fn_name: str, new_node: ast.FunctionDef):
+                self.fn_name = fn_name
+                self.new_node = new_node
+                self.replaced = False
 
-        if target_node is None:
+            def visit_FunctionDef(self, node: ast.FunctionDef):
+                if node.name == self.fn_name:
+                    self.replaced = True
+                    return self.new_node
+                return node
+
+        replacer = FunctionReplacer(target_function_name, replacement_node)
+        modified_tree = replacer.visit(orig_tree)
+        ast.fix_missing_locations(modified_tree)
+
+        if not replacer.replaced:
             return SemanticPatchResult(
                 success=False,
                 patched_code="",
@@ -945,42 +1009,7 @@ class SemanticPatchEngine:
                 error=f"La función objetivo '{target_function_name}' no existe en el código fuente original."
             )
 
-        start_idx = (
-            target_node.decorator_list[0].lineno - 1
-            if getattr(target_node, "decorator_list", None)
-            else target_node.lineno - 1
-        )
-        end_idx = getattr(target_node, "end_lineno", None)
-
-        if end_idx is not None:
-            orig_lines = original_source.splitlines(keepends=True)
-            indent = " " * getattr(target_node, "col_offset", 0)
-            rep_lines = replacement_function_source.strip("\n").splitlines(keepends=True)
-            if indent and rep_lines and not rep_lines[0].startswith(indent):
-                rep_lines = [indent + ln if ln.strip() else ln for ln in rep_lines]
-            if rep_lines and not rep_lines[-1].endswith("\n"):
-                rep_lines[-1] += "\n"
-            patched_code = "".join(orig_lines[:start_idx] + rep_lines + orig_lines[end_idx:])
-            if not patched_code.endswith("\n"):
-                patched_code += "\n"
-            ast.parse(patched_code)
-        else:
-            class FunctionReplacer(ast.NodeTransformer):
-                def __init__(self, fn_name: str, new_node: ast.FunctionDef):
-                    self.fn_name = fn_name
-                    self.new_node = new_node
-                    self.replaced = False
-
-                def visit_FunctionDef(self, node: ast.FunctionDef):
-                    if node.name == self.fn_name:
-                        self.replaced = True
-                        return self.new_node
-                    return node
-
-            replacer = FunctionReplacer(target_function_name, replacement_node)
-            modified_tree = replacer.visit(orig_tree)
-            ast.fix_missing_locations(modified_tree)
-            patched_code = ast.unparse(modified_tree) + "\n"
+        patched_code = ast.unparse(modified_tree) + "\n"
 
         diff_lines = list(difflib.unified_diff(
             original_source.splitlines(keepends=True),
@@ -28334,7 +28363,7 @@ class DotAlephSovereignWorldDesignerAndGovernanceGateProver:
     def verify_and_synthesize(
         cls,
         code_or_manifest: str,
-        target_path: str = ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V33_0.json",
+        target_path: str = ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V11.json",
         brand_accent_oklch: str = "oklch(0.68 0.19 265)",
     ) -> DotAlephSovereignWorldDesignerReport:
         t0 = time.perf_counter()

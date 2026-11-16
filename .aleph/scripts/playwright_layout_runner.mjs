@@ -1,22 +1,25 @@
 #!/usr/bin/env node
 /**
  * .aleph/scripts/playwright_layout_runner.mjs
- * Oráculo Físico de Layout con Playwright (Plan V5 - Track 3).
+ * Oráculo Físico de Layout con Playwright / Chromium CDP WebDriver (Plan V5/V7 - Track 3).
  *
  * Mide píxeles reales en un motor Chromium/Blink real:
  * - scrollWidth - clientWidth <= 0 (invariante de 0 overflow horizontal)
  * - Dimensiones mínimas de touch targets (40x40 / 44x44px)
  * - Jerarquía semántica de titulares (h1 -> h2 -> h3, sin saltos)
- * - Evaluación en 3 Viewports Canónicos:
- *     1. Mobile: 375 x 812 (iPhone X / SE / Mini baseline)
- *     2. Tablet: 768 x 1024 (iPad portrait baseline)
- *     3. Desktop: 1440 x 900 (MacBook Pro / Standard Desktop baseline)
+ * - Evaluación en 6 Viewports Canónicos:
+ *     1. mobile_320:  320 x 568
+ *     2. mobile_375:  375 x 812
+ *     3. tablet_768:  768 x 1024
+ *     4. tablet_1024: 1024 x 768
+ *     5. desktop_1440: 1440 x 900
+ *     6. desktop_1920: 1920 x 1080
  */
 
-import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const VIEWPORTS = [
   { name: 'mobile_320', category: 'mobile', width: 320, height: 568 },
@@ -28,6 +31,9 @@ const VIEWPORTS = [
 ];
 
 const DEFAULT_CHROME_PATHS = [
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
+  '/usr/bin/google-chrome',
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
   process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Google\\Chrome\\Application\\chrome.exe') : null
@@ -79,7 +85,6 @@ function resolveChromeExecutable(customPath) {
 
 async function runPhysicalAudit() {
   const options = parseArgs();
-  const chromePath = resolveChromeExecutable(options.chromePath);
 
   if (!fs.existsSync(options.htmlFile)) {
     const errPayload = {
@@ -92,9 +97,45 @@ async function runPhysicalAudit() {
     process.exit(1);
   }
 
+  let playwrightMod = null;
+  try {
+    playwrightMod = await import('playwright');
+  } catch (_err) {
+    playwrightMod = null;
+  }
+
+  // Fallback soberano a Chromium real vía puente Python Selenium/CDP si el paquete npm playwright no está instalado
+  if (!playwrightMod) {
+    const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+    const alephDir = path.dirname(scriptDir);
+    const pyCode = `
+import json, sys
+sys.path.insert(0, ${JSON.stringify(path.join(alephDir, 'lib'))})
+from aleph_render_oracle import LivePlaywrightOracle
+html_path = ${JSON.stringify(options.htmlFile)}
+out_path = ${options.output ? JSON.stringify(options.output) : "None"}
+with open(html_path, 'r', encoding='utf-8') as f:
+    html_str = f.read()
+report_dict = LivePlaywrightOracle.audit_via_chromium_cdp_dict(html_str, timeout_sec=${options.timeoutMs / 1000.0})
+if out_path:
+    import os
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, 'w', encoding='utf-8') as out_f:
+        json.dump(report_dict, out_f, indent=2, ensure_ascii=False)
+print(json.dumps(report_dict))
+sys.exit(0 if report_dict.get('is_passing', False) else 2)
+`;
+    const pyProc = spawnSync('python3', ['-c', pyCode], { encoding: 'utf-8', timeout: options.timeoutMs + 10000 });
+    if (pyProc.stdout) process.stdout.write(pyProc.stdout);
+    if (pyProc.stderr && pyProc.status !== 0 && pyProc.status !== 2) process.stderr.write(pyProc.stderr);
+    process.exit(pyProc.status ?? 1);
+  }
+
+  const { chromium } = playwrightMod;
+  const chromePath = resolveChromeExecutable(options.chromePath);
   const launchOpts = {
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu']
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--hide-scrollbars']
   };
   if (chromePath) {
     launchOpts.executablePath = chromePath;
@@ -103,8 +144,7 @@ async function runPhysicalAudit() {
   let browser;
   try {
     browser = await chromium.launch(launchOpts);
-  } catch (err) {
-    // Si falla con ejecutable específico, reintentar con chromium default de playwright
+  } catch (_err) {
     delete launchOpts.executablePath;
     browser = await chromium.launch(launchOpts);
   }
@@ -125,8 +165,7 @@ async function runPhysicalAudit() {
       const page = await context.newPage();
 
       await page.goto(fileUrl, { waitUntil: 'domcontentloaded', timeout: options.timeoutMs });
-      // Esperar breve estabilización de render y microfísica
-      await page.waitForTimeout(100);
+      await page.waitForTimeout(80);
 
       const metrics = await page.evaluate((currentVp) => {
         const root = document.documentElement;
@@ -136,16 +175,14 @@ async function runPhysicalAudit() {
         const bodyOverflow = body ? body.scrollWidth - body.clientWidth : 0;
         const overflowX = Math.max(0, rootOverflow, bodyOverflow);
 
-        // Tap targets interactivos
         const interactive = Array.from(document.querySelectorAll('button, a, input, select'));
         const smallTargets = interactive.filter(el => {
           const rect = el.getBoundingClientRect();
           return rect.width > 0 && rect.height > 0 && (rect.width < 40 || rect.height < 40);
         }).map(el => el.id || el.className || el.tagName.toLowerCase());
 
-        // Jerarquía de titulares
         const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'))
-          .map(h => parseInt(h.tagName[1]));
+          .map(h => parseInt(h.tagName[1], 10));
         const headingViolations = [];
         if (headings.length > 0 && headings[0] !== 1) {
           headingViolations.push(`El documento comienza con h${headings[0]} en vez de h1`);
@@ -156,12 +193,8 @@ async function runPhysicalAudit() {
           }
         }
 
-        // =====================================================================
-        // ORÁCULO FOTOMÉTRICO Y CRÍTICO DE ARTE SOBERANO (Chromium/Blink Real)
-        // =====================================================================
         const visualViolations = [];
 
-        // Utilidades fotométricas de color
         function parseRgba(colorStr) {
           if (!colorStr || colorStr === 'transparent' || colorStr === 'inherit') return null;
           const m = colorStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
@@ -187,11 +220,9 @@ async function runPhysicalAudit() {
         function isBrightAccent(rgba) {
           if (!rgba || rgba.a < 0.25) return false;
           const hsl = rgbToHsl(rgba.r, rgba.g, rgba.b);
-          // Acento brillante: saturación alta (>= 45%) y luminancia perceptible (25% - 85%)
           return hsl.s >= 0.45 && hsl.l >= 0.25 && hsl.l <= 0.85;
         }
 
-        // APCA 0.98G (Advanced Perceptual Contrast Algorithm - WCAG 3 Candidate)
         function sRGBtoY(r, g, b) {
           const sR = r / 255.0, sG = g / 255.0, sB = b / 255.0;
           return 0.2126729 * Math.pow(sR, 2.4) + 0.7151522 * Math.pow(sG, 2.4) + 0.0721750 * Math.pow(sB, 2.4);
@@ -215,10 +246,6 @@ async function runPhysicalAudit() {
           return Math.abs(outputContrast);
         }
 
-        // ---------------------------------------------------------------------
-        // LEY 1: Presupuesto de Acento (Regla 60-30-10)
-        // Mapeo del DOM computado para auditar que el color de acento brillante <= 10%
-        // ---------------------------------------------------------------------
         const SAMPLE_COLS = 30;
         const SAMPLE_ROWS = 20;
         const totalSamples = SAMPLE_COLS * SAMPLE_ROWS;
@@ -253,7 +280,6 @@ async function runPhysicalAudit() {
           visualViolations.push(`Ley del Presupuesto de Acento (60-30-10) violada: Color de acento brillante cubre ${accentRatioPct.toFixed(1)}% del área visual (límite máximo permitido: 10.0%)`);
         }
 
-        // Prohibir más de 2 botones con fondo de acento primario en la navbar
         const navbars = Array.from(document.querySelectorAll('nav, .aleph-navbar'));
         for (const nav of navbars) {
           const buttons = Array.from(nav.querySelectorAll('button, a.aleph-button, .aleph-button'));
@@ -270,12 +296,8 @@ async function runPhysicalAudit() {
           }
         }
 
-        // ---------------------------------------------------------------------
-        // LEY 2: Co-linearidad de Acciones (Desktop)
-        // Auditoría de bounding boxes para verificar que grupos de botones en desktop estén en el mismo eje (delta Y <= 4px)
-        // ---------------------------------------------------------------------
         let maxColinearityDeltaY = 0.0;
-        if (currentVp === 'desktop') {
+        if (String(currentVp).startsWith('desktop')) {
           const actionContainers = Array.from(document.querySelectorAll(
             '.aleph-hero-actions, [class*="actions"], [class*="button-group"], [class*="btn-group"], header nav, .hero-actions'
           ));
@@ -315,10 +337,6 @@ async function runPhysicalAudit() {
           }
         }
 
-        // ---------------------------------------------------------------------
-        // LEY 3: Superficie Protectora & Contraste APCA sobre WebGL/Canvas
-        // Textos y tarjetas sobre canvas WebGL deben tener backdrop-filter o background protector con APCA >= 75 Lc
-        // ---------------------------------------------------------------------
         const canvases = Array.from(document.querySelectorAll('canvas')).filter(c => {
           const r = c.getBoundingClientRect();
           return r.width >= 100 && r.height >= 100 && window.getComputedStyle(c).display !== 'none';
@@ -377,10 +395,6 @@ async function runPhysicalAudit() {
           }
         }
 
-        // ---------------------------------------------------------------------
-        // LEY 4: Densidad Visual en Bento Cards
-        // Auditar que las tarjetas Bento posean elementos visuales internos (<svg>, <canvas>, <code>) y no solo texto
-        // ---------------------------------------------------------------------
         const bentoCards = Array.from(document.querySelectorAll(
           '.aleph-bento-grid > article, .aleph-bento-grid > div, .bento-grid > article, .bento-grid > div, .aleph-comp-bento_card, .aleph-comp-bento_item, .aleph-bento-card'
         )).filter(c => {
@@ -404,10 +418,6 @@ async function runPhysicalAudit() {
           }
         }
 
-        // ---------------------------------------------------------------------
-        // LEY 5: Detección de Saltos de Línea no Intencionales en Enlaces de Menú
-        // Auditar que los enlaces de menú no se partan en múltiples líneas apretadas
-        // ---------------------------------------------------------------------
         const menuLinks = Array.from(document.querySelectorAll('nav a, .aleph-navbar a, header nav a, .navbar a')).filter(link => {
           const r = link.getBoundingClientRect();
           return r.width > 0 && r.height > 0 && link.innerText.trim().length > 0;
@@ -419,7 +429,6 @@ async function runPhysicalAudit() {
           if (isNaN(lh)) {
             lh = (parseFloat(st.fontSize) || 16) * 1.25;
           }
-          // Medir la geometría del texto real usando DOM Range para evitar falsos positivos por touch-targets/padding
           const range = document.createRange();
           range.selectNodeContents(link);
           const textRects = range.getClientRects();

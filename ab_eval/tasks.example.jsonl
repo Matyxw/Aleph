@@ -1,0 +1,1 @@
+{"id": "ejemplo-1", "prompt": "Arregla el bug en calc.py para que pasen los tests.", "workdir": "ruta/a/tu/repo", "verify": "pytest -q"}

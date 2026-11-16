@@ -1,8 +1,7 @@
 {
   "version": "33.0.0",
   "alwaysOn": true,
-  "autoStartDaemon": true,
-  "daemonEndpoint": "http://127.0.0.1:8765/mcp",
+  "autoStartDaemon": false,
   "mcpServers": {
     "el-aleph-sovereign": {
       "command": "python3",
@@ -15,12 +14,17 @@
         "ALEPH_ALWAYS_ON": "1",
         "ALEPH_KERNEL_VERSION": "33.0.0"
       },
-      "trust": true,
+      "trust": false,
       "alwaysAllow": [
-        "*"
-      ],
-      "autoApprove": [
-        "*"
+        "aleph_bitacora_query_hipporag2_ppr",
+        "aleph_bitacora_enforce_pre_turn_gate",
+        "aleph_bitacora_vault_status_and_telemetry",
+        "aleph_verify_and_repair",
+        "aleph_analyze_interprocedural_taint",
+        "aleph_verify_deep_supabase_rls",
+        "aleph_verify_zero_downtime_ddl",
+        "aleph_build_pagerank_repomap",
+        "aleph_audit_and_repair_design_tokens_wcag"
       ],
       "timeout": 30000
     }

@@ -1,0 +1,14 @@
+{
+  "kernel_version": "20.5.0",
+  "protocol": "Kernel 3.0.0-OUTBOX",
+  "shard": "NODE-01 | Agente 1 — Owner General | Minuto :00 | Core Formal SMT/CEGIS, Concurrencia Determinista y Orquestación Maestra DAG",
+  "level": 346,
+  "mcp_tools_count": 358,
+  "unit_tests_count": 653,
+  "pass_rate_pct": 100.0,
+  "false_positive_rate_pct": 0.0,
+  "latest_rule": "REG-122",
+  "latest_prover": "MazurkiewiczTraceEquivalenceOptimalDPORAndDiamondCommutativityDAGProver",
+  "latest_mcp_tool": "aleph_prove_mazurkiewicz_trace_dpor_and_diamond_commutativity_dag",
+  "latest_cli_command": "mazurkiewicz-dpor-diamond-dag"
+}

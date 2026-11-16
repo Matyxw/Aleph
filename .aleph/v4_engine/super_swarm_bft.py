@@ -4,7 +4,7 @@
 =============================================================================
 El Aleph v4.0 - Super-Swarm 1,000+ DAG-BFT Engine
 Sub-sistema: Malla Descentralizada Concurrente, Economía VCG y Consenso Causal
-Ruta: .aleph/v4_engine/super_swarm_bft.py
+Ruta: .aleph\\v4_engine\\super_swarm_bft.py
 Doctrina: EL DEMIURGO - Protocolo Universal de Razonamiento y Ejecución
 =============================================================================
 """

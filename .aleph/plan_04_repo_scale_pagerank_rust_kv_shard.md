@@ -1,0 +1,20 @@
+---
+id: plan_04_repo_scale_pagerank_rust_kv_shard
+version: "14.0.0"
+shard: NODE-05
+status: VERIFIED_ACTIVE
+formal_levels: "182..224 (43 Provers)"
+mcp_tools: "#191..#233 (43 MCP Tools)"
+unit_tests: "364/364 PASS (0.0% FPR)"
+---
+# PLAN MAESTRO PRAGMÁTICO // PARTE 4: SHARD NODE-05 — REPO-SCALE PAGERANK AST, PERFORMANCE DE BAJO NIVEL RUST Y COMPRESIÓN KV 16x-20x
+
+## 1. Gobernanza Innegociable de Versión Única y Sincronización Total (`REG-073` a `REG-076`)
+1. **Carpeta Principal `13_El_Aleph` (`15lKUGkaJpeo_oC7L2_tFQ2Q6ZRimj8NB`)**: Contiene única y exclusivamente la versión más reciente y actualizada (`El_Aleph_v14_0_Sovereign_Unified_6Nodes_And_DotAleph_Master_Kernel.zip`). Está estrictamente prohibido dejar archivos desactualizados o coexistir dos `.zip` en `13_El_Aleph`.
+2. **Archivo Cronológico `Releases_Historicos` (`1P95b59O_NZHZOX9DMcj4_IAGEhCNLt91`)**: Toda versión reemplazada de `13_El_Aleph`, `.aleph` o de las cuentas de los nodos se mueve de inmediato a `Releases_Historicos`.
+3. **Evolución Simétrica de `.aleph` (`1faqKy4GrFSgK44tsqpyXwvWcze9jfbPY`)**: El entorno `.aleph` evoluciona en bloque junto con el núcleo soberano bajo el mismo rigor formal, pruebas unitarias y control de versiones.
+
+## 2. Catálogo Unificado de los 43 Motores Formales de NODE-05 (Niveles 182 a 224 / Tools MCP #191 a #233)
+- **Nivel 182 (`aleph_prove_polyglot_contract_bridge_and_incremental_repomap`)**: Congruencia de contratos políglotas Rust <-> TypeScript <-> PostgreSQL, IPPR Gauss-Southwell e alineación determinista de Prompt Cache de 1024 tokens.
+- **Niveles 183 a 197**: SimHash AST Clone + H2O KV Cache, Tarjan SCC + PyO3 GIL + Speculative Edit, Lengauer-Tarjan Dominator Tree + RadixAttention + Wasm Memory, Rowan Green/Red CST + False Sharing + StreamingLLM Attention Sinks, PLD N-Gram + Bump Arena Drop Soundness, Salsa Early Cutoff + rkyv Alignment + Chunked Prefill, Roaring Bitmaps + io_uring Barriers + SnapKV, E-Graph Equality Saturation + Pin Projection + PyramidKV, Pruned Landmark Hub Labeling + Epoch Reclamation + Quest KV, StackGraph Resolution + SIMD Vectorization + DuoAttention, Wavelet FM-Index + MaybeUninit + KIVI 2-bit KV, Dynamic Euler Tour + Tree Borrows + MInference, Differential Datalog Z-Sets + Send/Sync + YOCO KV, Aho-Corasick + FFI Unwind + DeepSeek MLA, Sleator-Tarjan Link-Cut Tree + Transmute Niche + InfLLM.
+- **Niveles 198 a 224**: Forward Push + Static Mut + Loki Eigen-KV, FORA Bidirectional PPR + Strict Provenance + ChunkKV, ResAcc PPR + UnsafeCell NoAlias + MiniCache SLERP, Chebyshev PPR + slice::from_raw_parts + RazorAttention, Effective Resistance Spectral Sparsifier + Unaligned Ptr + AdaKV, BlockRank PPR + ZST Alloc + Cross-Layer Attention, Quadratic Extrapolation PPR + Dealloc Layout + ThinK, Gauss-Seidel In-Place PPR + copy_nonoverlapping + GEAR KV, Arnoldi-Krylov PPR + Vec::set_len + Palu Low-Rank KV, Anderson Acceleration PPR + from_utf8_unchecked + KVQuant Pre-RoPE, RRE Extrapolation PPR + Box::from_raw + RetrievalAttention, Inner-Outer PPR + CStr::from_ptr + ShadowKV, Adaptive PPR + ManuallyDrop + GemFilter, Aitken Delta-Squared PPR + NonNull::new_unchecked + FastGen, Lumping PPR + get_unchecked + SqueezeAttention, Block-Triangular SCC PPR + addr_of_mut! Packed + CAKE, BiCGSTAB PPR + write_bytes + KV-Compress Paged, ACL Conductance PPR + swap_nonoverlapping + Q-Filters, SpeedPPR Power-Push + slice_from_raw_parts_mut + L2-Norm KV, FISTA Variational PPR + read/write_volatile + TOVA KV, RBS Degree-Stratified PPR + drop_in_place + Scissorhands KV, TopPPR Precision Bounds + ptr::replace + Keyformer Gumbel KV, Heat Kernel PPR + ptr::read Non-Copy + Quantized Scissorhands 20x, BernNet Polynomial PPR + ptr::write Leak + AeroSketch 20x KV, ChebNetII Chebyshev Interpolation PPR + without_provenance_mut + Persistent L2-Norm KV, Sublinear ADD-PPR + get_disjoint_mut + Dyadic-Decay TOVA KV, y DynELM O(log^2 |V|) Dynamic Structural PPR Clustering + Volatile Load/Store Splitting Guard + Hybrid Q-Filter & Low-L2-Norm Key 16x FlashAttention KV Compression.

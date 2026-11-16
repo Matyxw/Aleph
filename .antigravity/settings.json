@@ -1,22 +1,16 @@
 {
   "antigravity.agent.alwaysOnMcp": true,
   "antigravity.agent.trustedMcpServers": [
-    "el-aleph-sovereign",
-    "el-aleph-sovereign-http-daemon"
+    "el-aleph-sovereign"
   ],
-  "antigravity.agent.autoApproveTools": true,
+  "antigravity.agent.autoApproveTools": false,
   "antigravity.agent.rulesFiles": [
     ".antigravity/rules.md",
-    "GEMINI.md",
-    ".aleph/CLAUDE.md",
-    ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V33_0.json",
-    ".aleph/ALEPH_SOVEREIGN_WORLD_DESIGNER_MASTER_PLAN_V7.md"
+    "GEMINI.md"
   ],
-  "antigravity.verification.preWriteGate": "aleph_audit_code",
+  "antigravity.verification.preWriteGate": "aleph_verify_and_repair",
   "antigravity.verification.uiGate": "aleph_prove_dot_aleph_sovereign_world_designer_and_governance_gate",
-  "antigravity.verification.dbGate": "aleph_prove_postgres18_supabase_rls_and_zero_downtime_ddl",
+  "antigravity.verification.dbGate": "aleph_verify_zero_downtime_ddl",
   "antigravity.agent.preTurnMcpTool": "aleph_bitacora_enforce_pre_turn_gate",
-  "antigravity.agent.postTurnMcpTool": "aleph_omega_dgm_alphaevolve_self_improve",
-  "antigravity.agent.bitacoraVaultPath": ".aleph/BITACORA_MASTER_VAULT_V33.json",
-  "antigravity.agent.zeroForgettingEnforced": true
+  "antigravity.agent.bitacoraVaultPath": ".aleph/BITACORA_MASTER_VAULT_V33.json"
 }

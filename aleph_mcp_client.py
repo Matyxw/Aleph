@@ -18,7 +18,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.request
 import urllib.error
@@ -28,8 +27,8 @@ from typing import Any, Dict, Optional
 BASE_DIR = Path(__file__).resolve().parent
 CLI_PATH = BASE_DIR / "aleph_cli.py"
 DEFAULT_HTTP_URL = "http://127.0.0.1:8765"
-PID_FILE = Path(tempfile.gettempdir()) / "aleph_mcp_http.pid"
-LOG_FILE = Path(tempfile.gettempdir()) / "aleph_mcp_http.log"
+PID_FILE = Path("/tmp/aleph_mcp_http.pid")
+LOG_FILE = Path("/tmp/aleph_mcp_http.log")
 
 
 class AlephMCPClient:
@@ -61,15 +60,15 @@ class AlephMCPClient:
         if self.is_http_daemon_alive():
             return {"status": "already_running", "endpoint": self.mcp_endpoint, "health": self.health_endpoint}
 
-        with open(LOG_FILE, "a", encoding="utf-8") as log_fh:
-            proc = subprocess.Popen(
-                [sys.executable, str(CLI_PATH), "mcp-http", str(port)],
-                cwd=str(BASE_DIR),
-                stdout=log_fh,
-                stderr=log_fh,
-                close_fds=(os.name != "nt"),
-                start_new_session=(os.name != "nt"),
-            )
+        log_fh = open(LOG_FILE, "a", encoding="utf-8")
+        proc = subprocess.Popen(
+            [sys.executable, str(CLI_PATH), "mcp-http", str(port)],
+            cwd=str(BASE_DIR),
+            stdout=log_fh,
+            stderr=log_fh,
+            close_fds=True,
+            start_new_session=True,
+        )
         PID_FILE.write_text(str(proc.pid), encoding="utf-8")
 
         deadline = time.time() + 5.0
@@ -155,9 +154,6 @@ def main():
     sub = parser.add_subparsers(dest="cmd")
 
     sub.add_parser("status", help="Ensure MCP HTTP daemon is running and return health + protocol status")
-    p_start = sub.add_parser("start", help="Start MCP Streamable HTTP daemon")
-    p_start.add_argument("--host", default="127.0.0.1", help="Host address to bind")
-    p_start.add_argument("--port", type=int, default=8765, help="Port number to bind")
     sub.add_parser("list-tools", help="List all registered MCP tools via JSON-RPC 2.0")
 
     p_call = sub.add_parser("call", help="Invoke an MCP tool by name with JSON arguments")
@@ -170,12 +166,7 @@ def main():
     args = parser.parse_args()
     client = AlephMCPClient(base_url=args.url)
 
-    if args.cmd == "start":
-        client = AlephMCPClient(base_url=f"http://{args.host}:{args.port}")
-        daemon_info = client.ensure_http_daemon(port=args.port)
-        print(json.dumps(daemon_info, indent=2, ensure_ascii=False))
-
-    elif args.cmd == "status":
+    if args.cmd == "status":
         daemon_info = client.ensure_http_daemon()
         init_resp = client.rpc_http("initialize", {"clientInfo": {"name": "gemini-web-mcp-client", "version": "3.8.0"}})
         tools_resp = client.rpc_http("tools/list", {})

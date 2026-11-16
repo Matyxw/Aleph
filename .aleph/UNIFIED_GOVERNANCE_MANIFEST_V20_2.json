@@ -1,0 +1,14 @@
+{
+  "kernel_version": "20.2.0",
+  "protocol": "Kernel 3.0.0-OUTBOX",
+  "shard": "NODE-01 | Agente 1 — Owner General | Minuto :00 | Core Formal SMT/CEGIS, Concurrencia Determinista y Orquestación Maestra DAG",
+  "level": 343,
+  "mcp_tools_count": 355,
+  "unit_tests_count": 647,
+  "pass_rate_pct": 100.0,
+  "false_positive_rate_pct": 0.0,
+  "latest_rule": "REG-119",
+  "latest_prover": "VectorClockCausalBarrierJoinSemilatticeReducerAndHedgedStragglerIdempotentDAGProver",
+  "latest_mcp_tool": "aleph_prove_vector_clock_causal_barrier_semilattice_and_hedged_straggler_dag",
+  "latest_cli_command": "vector-clock-semilattice-hedged-dag"
+}

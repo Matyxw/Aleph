@@ -1,16 +1,24 @@
 """
 .aleph/tests/test_aleph_live_oracle.py
-Tests para el Oráculo de Renderizado Físico (Playwright + Chromium/Blink real) y Auditor DOM Estático.
-Garantiza cero mocks en la verificación de layout físico y pruebas ultrarrápidas en modo estático.
+Tests para el Oráculo de Renderizado Físico (Chromium/Blink real) y Auditor DOM Estático.
+Compatible tanto con `python3 -m unittest` como con `pytest`.
 """
-
+import sys
 import unittest
+from pathlib import Path
 
+_ALEPH = Path(__file__).resolve().parent.parent
+_TESTS_DIR = Path(__file__).resolve().parent
+for _p in (_ALEPH.parent, _ALEPH, _ALEPH / "lib", _TESTS_DIR):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
+from conftest import _chromium_or_playwright_disponible  # noqa: E402
 from lib.aleph_render_oracle import AlephRenderOracle, LivePlaywrightOracle, StaticDOMAuditor
 from lib.aleph_design_facade import AlephDesignFacade
 
-_PLAYWRIGHT_AVAILABLE, _PLAYWRIGHT_SKIP_REASON = LivePlaywrightOracle.is_available()
-_requires_playwright = unittest.skipUnless(_PLAYWRIGHT_AVAILABLE, _PLAYWRIGHT_SKIP_REASON)
+_LIVE_CHROMIUM_OK = _chromium_or_playwright_disponible()
+_SKIP_CHROMIUM = "requiere Chromium+Selenium o Playwright+Chromium"
 
 
 def test_static_dom_auditor_fast_pass():
@@ -60,7 +68,6 @@ def test_static_dom_auditor_catches_slop():
     assert any("transition: all" in f for f in report.slop_findings)
 
 
-@_requires_playwright
 def test_live_playwright_oracle_real_chromium():
     """
     Verifica que LivePlaywrightOracle ejecuta un proceso Chromium/Blink real
@@ -72,16 +79,13 @@ def test_live_playwright_oracle_real_chromium():
     live_oracle = LivePlaywrightOracle()
     report = live_oracle.audit_live_rendered_html(res.html_bundle, timeout_sec=15.0)
 
-    # Verificación en motor Blink real
-    assert report.is_passing is True
+    assert report.is_passing is True, f"Violations: {report.visual_design_violations} / {report.heading_hierarchy_violations}"
     assert report.horizontal_overflow_px == 0.0
     assert len(report.heading_hierarchy_violations) == 0
 
-    # Métricas emitidas por el proceso Node / Chromium
     metrics = report.metrics
     assert "Chromium" in metrics.get("engine", "")
     viewports = metrics.get("viewports", {})
-    # The oracle now uses granular keys (mobile_375, tablet_768, desktop_1440)
     mobile_keys = [k for k in viewports if k.startswith("mobile")]
     tablet_keys = [k for k in viewports if k.startswith("tablet")]
     desktop_keys = [k for k in viewports if k.startswith("desktop")]
@@ -89,7 +93,6 @@ def test_live_playwright_oracle_real_chromium():
     assert len(tablet_keys) > 0
     assert len(desktop_keys) > 0
 
-    # Use first mobile viewport (mobile_375 or mobile_320)
     mobile_key = next(k for k in mobile_keys if "375" in k) if any("375" in k for k in mobile_keys) else mobile_keys[0]
     mobile_vp = viewports[mobile_key]
     assert mobile_vp["overflowX"] == 0
@@ -97,7 +100,6 @@ def test_live_playwright_oracle_real_chromium():
     assert mobile_vp["clientWidth"] <= 375
 
 
-@_requires_playwright
 def test_live_playwright_oracle_detects_physical_overflow():
     """
     Inyecta una caja con ancho forzado de 3000px y verifica que el motor Chromium
@@ -118,7 +120,6 @@ def test_live_playwright_oracle_detects_physical_overflow():
     live_oracle = LivePlaywrightOracle()
     report = live_oracle.audit_live_rendered_html(overflow_html, timeout_sec=10.0)
 
-    # Must fail physically — find any mobile viewport with overflow
     assert report.is_passing is False
     assert report.horizontal_overflow_px > 0.0
     viewports = report.metrics["viewports"]
@@ -128,7 +129,6 @@ def test_live_playwright_oracle_detects_physical_overflow():
     assert mobile_overflow > 2000.0
 
 
-@_requires_playwright
 def test_aleph_render_oracle_live_mode_flag():
     """AlephRenderOracle delega en LivePlaywrightOracle cuando live=True."""
     oracle = AlephRenderOracle()
@@ -154,7 +154,6 @@ def test_aleph_render_oracle_live_mode_flag():
     assert "engine" in report.metrics
 
 
-@_requires_playwright
 def test_live_oracle_detects_accent_budget_excess():
     """Ley 1: Presupuesto de Acento (60-30-10) rechaza páginas donde el acento supera el 10% del viewport."""
     accent_slop_html = """<!DOCTYPE html>
@@ -166,8 +165,8 @@ def test_live_oracle_detects_accent_budget_excess():
             body { margin: 0; background: #000; }
             .giant-neon-box {
                 width: 100vw;
-                height: 35vh; /* 35% del viewport > 10% permitido */
-                background-color: #00f0ff; /* Saturación 100%, brillo 50% */
+                height: 35vh;
+                background-color: #00f0ff;
             }
         </style>
     </head>
@@ -183,7 +182,6 @@ def test_live_oracle_detects_accent_budget_excess():
     assert report.photometric_audit.get("accent_budget_passed") is False
 
 
-@_requires_playwright
 def test_live_oracle_detects_colinearity_violation():
     """Ley 2: Co-linearidad de Acciones detecta botones no alineados horizontalmente en Desktop (delta Y > 4px)."""
     unaligned_html = """<!DOCTYPE html>
@@ -194,7 +192,7 @@ def test_live_oracle_detects_colinearity_violation():
         <style>
             .aleph-hero-actions { display: flex; align-items: flex-start; gap: 16px; }
             .btn-a { height: 44px; margin-top: 0; }
-            .btn-b { height: 44px; margin-top: 14px; } /* Desfase de 14px > 4px */
+            .btn-b { height: 44px; margin-top: 14px; }
         </style>
     </head>
     <body>
@@ -212,7 +210,6 @@ def test_live_oracle_detects_colinearity_violation():
     assert report.photometric_audit.get("action_colinearity_passed") is False
 
 
-@_requires_playwright
 def test_live_oracle_detects_unprotected_canvas_surface():
     """Ley 3: Superficie Protectora rechaza texto sobre canvas WebGL sin backdrop-filter ni opacidad protectora."""
     canvas_slop_html = """<!DOCTYPE html>
@@ -225,7 +222,7 @@ def test_live_oracle_detects_unprotected_canvas_surface():
             canvas { position: absolute; top: 0; left: 0; width: 600px; height: 400px; }
             .floating-card {
                 position: absolute; top: 50px; left: 50px; width: 250px;
-                background: transparent; /* Carece de fondo protector y blur */
+                background: transparent;
                 color: #ffffff;
             }
         </style>
@@ -245,7 +242,6 @@ def test_live_oracle_detects_unprotected_canvas_surface():
     assert report.photometric_audit.get("protective_surface_passed") is False
 
 
-@_requires_playwright
 def test_live_oracle_detects_empty_bento_card():
     """Ley 4: Densidad Visual rechaza tarjetas Bento puramente textuales sin svg, canvas o code."""
     empty_bento_html = """<!DOCTYPE html>
@@ -271,7 +267,6 @@ def test_live_oracle_detects_empty_bento_card():
     assert report.photometric_audit.get("visual_density_passed") is False
 
 
-@_requires_playwright
 def test_live_oracle_detects_menu_wrapping():
     """Ley 5: Detección de saltos de línea involuntarios en enlaces de navegación de menú."""
     wrapped_menu_html = """<!DOCTYPE html>
@@ -283,7 +278,7 @@ def test_live_oracle_detects_menu_wrapping():
             nav { width: 200px; }
             nav a {
                 display: block;
-                width: 50px; /* Forzado a ancho ínfimo para forzar división de línea */
+                width: 50px;
                 font-size: 14px;
                 line-height: 18px;
             }
@@ -301,3 +296,49 @@ def test_live_oracle_detects_menu_wrapping():
     assert report.is_passing is False
     assert any("enlace de menú" in v for v in report.visual_design_violations)
     assert report.photometric_audit.get("menu_wrapping_passed") is False
+
+
+class TestAlephLiveOracleUnittest(unittest.TestCase):
+    """Envoltorio unittest.TestCase para descubrir y ejecutar las 10 pruebas en `python3 -m unittest`."""
+
+    def test_01_static_dom_auditor_fast_pass(self):
+        test_static_dom_auditor_fast_pass()
+
+    def test_02_static_dom_auditor_catches_slop(self):
+        test_static_dom_auditor_catches_slop()
+
+    @unittest.skipUnless(_LIVE_CHROMIUM_OK, _SKIP_CHROMIUM)
+    def test_03_live_playwright_oracle_real_chromium(self):
+        test_live_playwright_oracle_real_chromium()
+
+    @unittest.skipUnless(_LIVE_CHROMIUM_OK, _SKIP_CHROMIUM)
+    def test_04_live_playwright_oracle_detects_physical_overflow(self):
+        test_live_playwright_oracle_detects_physical_overflow()
+
+    @unittest.skipUnless(_LIVE_CHROMIUM_OK, _SKIP_CHROMIUM)
+    def test_05_aleph_render_oracle_live_mode_flag(self):
+        test_aleph_render_oracle_live_mode_flag()
+
+    @unittest.skipUnless(_LIVE_CHROMIUM_OK, _SKIP_CHROMIUM)
+    def test_06_live_oracle_detects_accent_budget_excess(self):
+        test_live_oracle_detects_accent_budget_excess()
+
+    @unittest.skipUnless(_LIVE_CHROMIUM_OK, _SKIP_CHROMIUM)
+    def test_07_live_oracle_detects_colinearity_violation(self):
+        test_live_oracle_detects_colinearity_violation()
+
+    @unittest.skipUnless(_LIVE_CHROMIUM_OK, _SKIP_CHROMIUM)
+    def test_08_live_oracle_detects_unprotected_canvas_surface(self):
+        test_live_oracle_detects_unprotected_canvas_surface()
+
+    @unittest.skipUnless(_LIVE_CHROMIUM_OK, _SKIP_CHROMIUM)
+    def test_09_live_oracle_detects_empty_bento_card(self):
+        test_live_oracle_detects_empty_bento_card()
+
+    @unittest.skipUnless(_LIVE_CHROMIUM_OK, _SKIP_CHROMIUM)
+    def test_10_live_oracle_detects_menu_wrapping(self):
+        test_live_oracle_detects_menu_wrapping()
+
+
+if __name__ == "__main__":
+    unittest.main()

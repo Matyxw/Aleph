@@ -65,7 +65,7 @@ A continuación se despliega el plan maestro unificado con todo el rigor de la i
 **Autor:** Redactor 1 — Arquitectura de Tokens, Espacios de Color y Óptica Perceptual  
 **Estado:** Canónico / Verificado mediante TDD (35 tests unitarios en `.aleph/tests/`)  
 **Módulos de Implementación:** `.aleph/lib/aleph_token_compiler.py`  
-**Ruta del Archivo Maestro:** `file:///C:/Users/Lucas%20cardozo/.aleph/master_plan_design/01_CAPITULO_1_FUNDAMENTOS_FISICO_MATEMATICOS.md`  
+**Ruta del Archivo Maestro:** `./.aleph/master_plan_design/01_CAPITULO_1_FUNDAMENTOS_FISICO_MATEMATICOS.md`  
 **Estándares Formales:** W3C DTCG / OKLab-OKLCH (Ottosson, 2020) / APCA-W3 Silver Draft v0.98G / WCAG 2.2 / CIE D65 / CIE D50 / Tailwind v4 `@theme`
 
 ---
@@ -479,7 +479,7 @@ Estimado Orquestador Maestro (`467a9871-cb32-4e3c-a699-979a02437fdb`):
 He completado la redacción, formulación matemática, arquitectura CSS y codificación ejecutable del **Capítulo 2: Morfología Polimórfica Paradigmática y Sistemas de Diseño Universales**.
 
 El documento ha sido verificado con ejecución real de Python, compilación determinista y comprobación formal de auditoría de colapso estético. Ha quedado persistido como artefacto maestro en:
-`C:\Users\Lucas cardozo\.gemini\antigravity-cli\brain\80094e2e-fb13-48c7-bac6-19727e8f8bd4\ALEPH_PLAN_MAESTRO_CAPITULO_02_MORFOLOGIA.md`
+`./.gemini\antigravity-cli\brain\80094e2e-fb13-48c7-bac6-19727e8f8bd4\ALEPH_PLAN_MAESTRO_CAPITULO_02_MORFOLOGIA.md`
 
 A continuación se reproduce el texto íntegro para su integración directa:
 
@@ -493,7 +493,7 @@ A continuación se reproduce el texto íntegro para su integración directa:
 **Destinatario:** Orquestador Maestro (Parent: `467a9871-cb32-4e3c-a699-979a02437fdb`)  
 **Clasificación:** Nivel Dios / Frontier Engineering / Top 0.01% UI Architecture  
 **Estado:** Especificación Formal Definitiva y Código Compilable  
-**Workspace:** `C:\Users\Lucas cardozo\.aleph` · **Fecha:** 2026-10-19  
+**Workspace:** `.aleph` · **Fecha:** 2026-10-19  
 
 ---
 
@@ -1361,7 +1361,7 @@ NOTE: The output was truncated because it was too long. Use a more targeted quer
 > **SISTEMAS ASOCIADOS:** `aleph_design_ir.py` (Esquema AST e Invariantes), `aleph_compiler_html.py` (Compilador CSS/HTML5), `aleph_compiler_react.py` (Compilador React 19)  
 > **AUTOR:** REDACTOR 3 — CEREBRO CINÉTICO Y SENSORIAL DE ALEPH ENGINE  
 > **FECHA DE REVISIÓN:** OCTUBRE 2026  
-> **ARTEFACTO EN DISCO:** `C:\Users\Lucas cardozo\.gemini\antigravity-cli\brain\d8ca4855-2f1d-4390-9f39-132630205d11\CAPITULO_3_SEMANTICA_INTERACCION_Y_MOTOR_CINETICO.md`
+> **ARTEFACTO EN DISCO:** `./.gemini\antigravity-cli\brain\d8ca4855-2f1d-4390-9f39-132630205d11\CAPITULO_3_SEMANTICA_INTERACCION_Y_MOTOR_CINETICO.md`
 
 ---
 
@@ -1950,8 +1950,8 @@ Cualquier render generado por Aleph Sovereign Engine debe superar con éxito las
 
 
 # REPORTE DE REDACTOR 4: CAPÍTULO 4 DEL PLAN MAESTRO DEFINITIVO
-**Documento Generado:** `C:\Users\Lucas cardozo\.gemini\antigravity-cli\brain\d8210980-fd7e-4830-bac8-93ebffa0f59e\ALEPH_PLAN_MAESTRO_CAPITULO_4_ESCENOGRAFIA_VECTORIAL.md`  
-**Módulo Implementado y Verificado:** `C:\Users\Lucas cardozo\.aleph\lib\aleph_visual_stage_synthesizer.py`  
+**Documento Generado:** `./.gemini\antigravity-cli\brain\d8210980-fd7e-4830-bac8-93ebffa0f59e\ALEPH_PLAN_MAESTRO_CAPITULO_4_ESCENOGRAFIA_VECTORIAL.md`  
+**Módulo Implementado y Verificado:** `.aleph\lib\aleph_visual_stage_synthesizer.py`  
 **Integración:** `aleph_compiler_html.py` / `aleph_compiler_react.py`  
 
 A continuación se presenta el texto íntegro y exhaustivo del **Capítulo 4**:
@@ -6162,7 +6162,7 @@ El **Motor Compilador Isomórfico Biyectivo Dual-Target** de Aleph establece un 
 **Doctrina Operativa:** EL DEMIURGO (`<filtro_permanente>`, `<nucleo_epistemologico>`, 7 Leyes de Hierro)  
 **Target:** Arquitectura Neuronal Simbiótica MCP (Antigravity Host LLM ↔ Aleph Sovereign Design Engine)  
 **Estatus:** 100% Completo, Verificado, Cero Placeholders, Verificación Formal SMT Z3 y Oráculo Físico Chromium  
-**Ruta de Persistencia:** `C:\Users\Lucas cardozo\.aleph\omega_plan_v7\09_PLAN_PROTOCOLO_SIMBIOSIS_COGNITIVA_HOST_TO_COMPILER_MCP.md`
+**Ruta de Persistencia:** `.aleph\omega_plan_v7\09_PLAN_PROTOCOLO_SIMBIOSIS_COGNITIVA_HOST_TO_COMPILER_MCP.md`
 
 ---
 
@@ -6665,7 +6665,7 @@ El **Protocolo de Simbiosis Cognitiva Host-to-Compiler** redefine para siempre e
 2. **Garantía Formal Matemática:** Al delegar la verificación y compilación en Aleph Sovereign Engine, ninguna interfaz llega al usuario con desbordamiento horizontal, problemas de contraste APCA o violaciones de accesibilidad. Z3 y Chromium actúan como árbitros absolutos e incorruptibles.
 3. **Poder Soberano:** Operación con coste marginal nulo ($0.00 USD), latencia mínima en silicio local y absoluta privacidad sin dependencia de proveedores externos de nube.
 
-El documento completo ha sido persistido en `C:\Users\Lucas cardozo\.aleph\omega_plan_v7\09_PLAN_PROTOCOLO_SIMBIOSIS_COGNITIVA_HOST_TO_COMPILER_MCP.md`.
+El documento completo ha sido persistido en `.aleph\omega_plan_v7\09_PLAN_PROTOCOLO_SIMBIOSIS_COGNITIVA_HOST_TO_COMPILER_MCP.md`.
 </SYSTEM_MESSAGE>
 
 
@@ -6685,7 +6685,7 @@ El documento completo ha sido persistido en `C:\Users\Lucas cardozo\.aleph\omega
 **Destino:** Consejo de Arquitectura de Aleph Sovereign Engine (`aleph-omega`) / Parent Agent  
 **Estatus:** Doctrina Normativa Vinculante / Ingeniería de Producción Verificada  
 **Fecha de Emisión:** 19 de Octubre de 2026  
-**Ruta en Disco:** `C:\Users\Lucas cardozo\.aleph\PLAN_MAESTRO_CAPITULO_10.md`  
+**Ruta en Disco:** `.aleph\PLAN_MAESTRO_CAPITULO_10.md`  
 **Clasificación:** Soberanía Absoluta / Cero Fuga Intelectual  
 
 ---

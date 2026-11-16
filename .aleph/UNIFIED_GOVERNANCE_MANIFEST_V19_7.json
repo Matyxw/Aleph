@@ -1,0 +1,15 @@
+{
+  "manifest_version": "19.7.0",
+  "active_rule": "REG-114",
+  "node_id": "NODE-01",
+  "shard": "Core Formal SMT/CEGIS, Concurrencia Determinista y Orquestaci\u00f3n Maestra DAG",
+  "total_mcp_tools": 350,
+  "total_unit_tests": 637,
+  "sota_4_layers": [
+    "Layer 1: DFA Lexer (0.0% FPR) + Cytron SSA phi-nodes Read-Write Set extractor",
+    "Layer 2: Dual SMT + ICP analytical boundary extraction {C-1, C, C+1} + WAW/RAW/WAR wave hazard detector",
+    "Layer 3: CEGIS Causal Dependency Edge synthesizer + Block-STM MVMemory incarnation fencing",
+    "Layer 4: Kahn O(V+E) topological waves + Tarjan SCC deadlock detection + Codere/ClipperOps/GOAR invariants"
+  ],
+  "pcc_seal_sha256": "41de5d205e3bdce40889e3309be5007d7ed7464f9d4848203a2601bb9a3001d0"
+}

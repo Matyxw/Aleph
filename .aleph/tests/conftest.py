@@ -1,16 +1,18 @@
-"""Configuración compartida de pytest para .aleph/tests: garantiza aislamiento del repo frente a ~/.aleph."""
+"""Rutas de importación uniformes y aislamiento frente a ~/.aleph para los tests de .aleph/ (unittest y pytest)."""
 import os
-from pathlib import Path
+import shutil
+import subprocess
 import sys
+from pathlib import Path
+
+_ALEPH = Path(__file__).resolve().parent.parent
+_ROOT = _ALEPH.parent
 
 
 def isolate_repo_dot_aleph() -> None:
-    """Prioriza las rutas locales de este repositorio y neutraliza variables globales ~/.aleph."""
-    aleph_dir = Path(__file__).resolve().parent.parent
-    repo_root = aleph_dir.parent
-    os.environ["ALEPH_HOME"] = str(aleph_dir)
-
-    aleph_resolved = aleph_dir.resolve()
+    """Prioriza las rutas locales de este repositorio y neutraliza ~/.aleph global."""
+    os.environ["ALEPH_HOME"] = str(_ALEPH)
+    aleph_resolved = _ALEPH.resolve()
     home_aleph = (Path.home() / ".aleph").resolve()
 
     def _under(candidate: str, root: Path) -> bool:
@@ -21,11 +23,12 @@ def isolate_repo_dot_aleph() -> None:
         return res == root or root in res.parents
 
     preferred = [
-        str(repo_root),
-        str(aleph_dir),
-        str(aleph_dir / "lib"),
-        str(aleph_dir / "scripts"),
-        str(aleph_dir / "hooks"),
+        str(_ROOT),
+        str(_ALEPH),
+        str(_ALEPH / "lib"),
+        str(_ALEPH / "v4_engine"),
+        str(_ALEPH / "scripts"),
+        str(_ALEPH / "hooks"),
     ]
     preferred_resolved = {Path(p).resolve() for p in preferred}
 
@@ -56,3 +59,40 @@ def isolate_repo_dot_aleph() -> None:
 
 
 isolate_repo_dot_aleph()
+
+try:
+    import pytest  # type: ignore
+except ImportError:
+    pytest = None  # type: ignore
+
+
+def _chromium_or_playwright_disponible() -> bool:
+    """True si Chromium/Selenium CDP o Node Playwright están disponibles para el oráculo físico en vivo."""
+    try:
+        import selenium  # noqa: F401
+        if shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome"):
+            return True
+    except ImportError:
+        pass
+    node = shutil.which("node")
+    if not node:
+        return False
+    try:
+        r = subprocess.run(
+            [node, "--input-type=module", "-e", "await import('playwright')"],
+            cwd=str(_ALEPH), capture_output=True, timeout=20,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def pytest_collection_modifyitems(config, items):
+    if pytest is None or _chromium_or_playwright_disponible():
+        return
+    skip = pytest.mark.skip(
+        reason="requiere Chromium+Selenium o Playwright+Chromium"
+    )
+    for item in items:
+        if item.fspath.basename == "test_aleph_live_oracle.py" and "live" in item.name.lower():
+            item.add_marker(skip)

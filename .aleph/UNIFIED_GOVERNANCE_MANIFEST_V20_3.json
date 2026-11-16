@@ -1,0 +1,14 @@
+{
+  "kernel_version": "20.3.0",
+  "protocol": "Kernel 3.0.0-OUTBOX",
+  "shard": "NODE-01 | Agente 1 — Owner General | Minuto :00 | Core Formal SMT/CEGIS, Concurrencia Determinista y Orquestación Maestra DAG",
+  "level": 344,
+  "mcp_tools_count": 356,
+  "unit_tests_count": 649,
+  "pass_rate_pct": 100.0,
+  "false_positive_rate_pct": 0.0,
+  "latest_rule": "REG-120",
+  "latest_prover": "ChandyLamportConsistentCausalCutAndDominoFreeRollbackRecoveryDAGProver",
+  "latest_mcp_tool": "aleph_prove_chandy_lamport_causal_cut_and_domino_free_rollback_dag",
+  "latest_cli_command": "chandy-lamport-causal-cut-dag"
+}

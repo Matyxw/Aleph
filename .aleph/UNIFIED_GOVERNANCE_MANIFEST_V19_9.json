@@ -1,0 +1,14 @@
+{
+  "kernel_version": "19.9.0",
+  "protocol": "Kernel 3.0.0-OUTBOX",
+  "shard": "NODE-01 | Agente 1 — Owner General | Minuto :00 | Core Formal SMT/CEGIS, Concurrencia Determinista y Orquestación Maestra DAG",
+  "level": 340,
+  "mcp_tools_count": 352,
+  "unit_tests_count": 641,
+  "pass_rate_pct": 100.0,
+  "false_positive_rate_pct": 0.0,
+  "latest_rule": "REG-116",
+  "latest_prover": "CriticalPathBrentMakespanAndPriorityInheritanceHolBlockingFreeDAGProver",
+  "latest_mcp_tool": "aleph_prove_critical_path_brent_makespan_and_priority_inheritance_dag",
+  "latest_cli_command": "critical-path-brent-dag"
+}

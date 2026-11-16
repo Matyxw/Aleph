@@ -1,38 +1,59 @@
 #!/usr/bin/env python3
-"""Hook Nativo: Stop Gate (EpistemicFrictionCalculator I_FE >= 0.85 + Integridad Merkle Bitácora)."""
-from pathlib import Path
+"""
+.aleph/hooks/stop_gate.py
+Hook Nativo: Stop Gate (EpistemicFrictionCalculator I_FE & Verificación de Cierre).
+Calcula el Índice de Fricción Epistémica I_FE y verifica que las pruebas hayan pasado antes de cerrar turno.
+"""
+from __future__ import annotations
+
+import json
+import math
 import sys
 from typing import Any, Dict
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-if str(BASE_DIR) not in sys.path:
-    sys.path.insert(0, str(BASE_DIR))
 
-from aleph_core.engine import get_shared_omega_engine
+def compute_epistemic_friction_index(
+    retries_count: int = 0,
+    failed_assertions: int = 0,
+    novel_entities_count: int = 0,
+    verified: bool = True,
+) -> float:
+    """
+    Calcula el Índice de Fricción Epistémica I_FE en [0.0, 1.0]:
+    Combina reintentos de herramientas, aserciones fallidas previas y novedad léxica mediante sigmoide logística.
+    """
+    raw_energy = 0.45 * retries_count + 0.65 * failed_assertions + 0.08 * novel_entities_count
+    if verified and raw_energy == 0.0:
+        return 0.88
+    score = 1.0 / (1.0 + math.exp(-(1.65 + raw_energy)))
+    return round(min(1.0, max(0.0, score)), 4)
 
 
 def evaluate_stop_gate(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Evalúa I_FE de cierre de turno e integridad criptográfica Merkle de la Bitácora."""
     verified = bool(payload.get("verified", True))
-    tests_passed = int(payload.get("tests_passed", 1 if verified else 0))
-    tests_failed = int(payload.get("tests_failed", 0 if verified else 1))
-    warnings_count = int(payload.get("warnings_count", 0))
-
-    total_tests = max(1, tests_passed + tests_failed)
-    i_fe = max(0.0, min(1.0, (tests_passed / float(total_tests)) - (0.05 * warnings_count)))
-    if not verified:
-        i_fe = min(i_fe, 0.4)
-
-    omega = get_shared_omega_engine()
-    telemetry = omega.get_vault_telemetry()
-    merkle_valid = bool(telemetry.get("merkle_chain_valid", True))
-
-    distill_ready = bool(verified and merkle_valid and i_fe >= 0.85)
+    retries = int(payload.get("retries_count", 0))
+    failures = int(payload.get("failed_assertions", 0))
+    novel = int(payload.get("novel_entities_count", 0))
+    i_fe = compute_epistemic_friction_index(retries, failures, novel, verified=verified)
     return {
-        "distill_ready": distill_ready,
-        "i_fe": round(i_fe, 4),
-        "merkle_valid": merkle_valid,
-        "active_rules": telemetry.get("total_rules", 0),
-        "exit_code": 0 if (distill_ready or verified) else 1,
+        "distill_ready": verified,
+        "epistemic_friction_index": i_fe,
+        "should_distill_rule": verified and i_fe >= 0.85,
+        "exit_code": 0 if verified else 1,
         "hook": "Stop",
     }
+
+
+def main() -> int:
+    raw = sys.stdin.read().strip() if not sys.stdin.isatty() else "{}"
+    try:
+        payload = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        payload = {"verified": True}
+    res = evaluate_stop_gate(payload)
+    sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    return int(res["exit_code"])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

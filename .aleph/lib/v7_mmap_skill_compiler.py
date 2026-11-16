@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 r"""
-.aleph/lib/v7_mmap_skill_compiler.py
+.aleph\lib\v7_mmap_skill_compiler.py
 
 Compilador e Indexador Binario Mmap de 1,957 Skills para El Aleph v7.0 Omega-Prime.
 Diseñado para la Doctrina EL DEMIURGO.
@@ -43,9 +43,9 @@ BYTES_PER_SKILL: int = VSA_WORDS_64 * 8  # Exactamente 1,280 bytes
 HEADER_FORMAT: str = "<8sIIIIQ32s"
 HEADER_SIZE_BYTES: int = 64
 
-# Rutas Canónicas del Sistema (portables, sin usuario hardcodeado)
-DEFAULT_SKILLS_DIR: Path = Path(os.environ.get("ALEPH_SKILLS_DIR", str(Path.home() / ".agents" / "skills")))
-DEFAULT_ALEPH_ROOT: Path = Path(os.environ.get("ALEPH_HOME", str(Path(__file__).resolve().parent.parent)))
+# Rutas Canónicas del Sistema
+DEFAULT_SKILLS_DIR: Path = Path(__file__).resolve().parent.parent / "skills"
+DEFAULT_ALEPH_ROOT: Path = Path(__file__).resolve().parent.parent
 DEFAULT_DATA_DIR: Path = DEFAULT_ALEPH_ROOT / "data"
 DEFAULT_MMAP_PATH: Path = DEFAULT_DATA_DIR / "skills_vsa_10240.mmap"
 DEFAULT_DB_PATH: Path = DEFAULT_DATA_DIR / "skills_catalog.db"

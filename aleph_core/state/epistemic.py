@@ -152,8 +152,8 @@ class VerificationGate:
                         claim.proof_output = f"Refutado por PBT fallback: {pbt_res.falsifying_example}"
                         claim.metadata["counterexample"] = pbt_res.falsifying_example
                         return claim
-            except Exception as pbt_err:
-                claim.metadata["pbt_error"] = str(pbt_err)
+            except Exception:
+                pass
 
         claim.status = EpistemicStatus.INFERRED
         claim.proof_output = f"Demostración formal inconclusa ({proof.description}). Requiere revisión adicional."

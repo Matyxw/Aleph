@@ -1,5 +1,6 @@
+from __future__ import annotations
 """
-Motor Central El Aleph v33.0.0 (Sovereign Omega Orchestrator).
+Motor Central El Aleph v2.6.0 (Sovereign Orchestrator).
 Integra en un único Kernel determinista:
 1. Estado Atómico SQLite WAL (StateStore) con Checkpointing Jerárquico
 2. Caché Semántica Exacta + Normalización AST (Zero-Token Cache Hit)
@@ -10,36 +11,13 @@ Integra en un único Kernel determinista:
 7. Planificador Concurrente de Grafos Acíclicos Dirigidos (DynamicDAGScheduler)
 8. Compuerta Epistémica Triple (Z3/Symbolic Prover -> PBT Fallback -> Empirical Gate)
 9. Motor de Parches Semánticos AST con Verificación Diferencial Anti-Regresión (SemanticPatchEngine)
-10. Enjambre de Auditoría (WarCouncilSwarm) y Ciclo de Automejora Continua (DemiurgoEvolutionEngine + HippoRAG 2 + Titans)
+10. Enjambre de Auditoría (WarCouncilSwarm) y Ciclo de Automejora Continua (DemiurgoEvolutionEngine)
 """
-from aleph_core.verification.z3_prover import BambooRetiredLockEarlyReleaseCommitBarrierAndRococoDeferredPieceDAGProver
-from aleph_core.verification.z3_prover import TicTocDataDrivenTimestampIntervalExtensionAndCicadaContentionAwareMVCCDAGProver
-from aleph_core.verification.z3_prover import CaracalBatchAppendHotspotPieceSplittingAndBohmPlaceholderMVCCDAGProver
-from aleph_core.verification.z3_prover import BlockSTMMVMemoryEstimateMarkerAndIncarnationValidationDAGProver
-from aleph_core.verification.z3_prover import SiloThreePhaseOCCSortedWriteLockAndTIDWordValidationDAGProver
-from aleph_core.verification.z3_prover import AriaDeterministicEpochBatchReservationAndConflictReorderingZero2PCDAGProver
-from aleph_core.verification.z3_prover import SerializableSnapshotIsolationRWAntidependencyCycleAndPhantomPredicateLockDAGProver
-from aleph_core.verification.z3_prover import EpochFencedLeaseWriteAheadLogGroupCommitAndLinearizableTruncateDAGProver
-from aleph_core.verification.z3_prover import ByzantineQuorumCertificateThreeChainFinalityAndEquivocationSlashingDAGProver
-from aleph_core.verification.z3_prover import DynamicQuorumJointConsensusReadIndexLeaseAndSplitBrainPreventionDAGProver
-from aleph_core.verification.z3_prover import SagaPivotPhaseOrderingReverseTopologicalCompensationAndOutboxDAGProver
-from aleph_core.verification.z3_prover import MazurkiewiczTraceEquivalenceOptimalDPORAndDiamondCommutativityDAGProver
-from aleph_core.verification.z3_prover import DeficitRoundRobinMaxMinFairnessAndMultiTenantTokenQuotaIsolationDAGProver
-from aleph_core.verification.z3_prover import ChandyLamportConsistentCausalCutAndDominoFreeRollbackRecoveryDAGProver
-from aleph_core.verification.z3_prover import VectorClockCausalBarrierJoinSemilatticeReducerAndHedgedStragglerIdempotentDAGProver
-from aleph_core.verification.z3_prover import CreditBasedBackpressureParksBoundedBufferAndChandyMisraHaasKnotFreeDAGProver
-from aleph_core.verification.z3_prover import EDFWorkConservingLaxityAndWaitDieStarvationFreeDAGProver
-from aleph_core.verification.z3_prover import CriticalPathBrentMakespanAndPriorityInheritanceHolBlockingFreeDAGProver
-from aleph_core.verification.z3_prover import ContextCarryingActionIntentEpochFencedDeadSwitchAndNurseryCancellationProver
-from aleph_core.verification.z3_prover import SpeculativeWaveReadWriteConflictMVMemoryAndCausalEdgeSynthesizerProver
-from aleph_core.verification.z3_prover import PG18BTreeDeduplicationPostingListCompressionSupabaseRlsRealtimePresenceStateQuotaGuardAndZeroDowntimeColumnNotNullCheckValidationProver
-from aleph_core.verification.z3_prover import PG18LogicalSlotFailoverSynchronizationSupabaseRlsMultiTenantWebhookReplayDefenseAndZeroDowntimeTablePartitionSplitMergeProver
 import ast
-import threading
 import uuid
 import time
 from pathlib import Path
-from typing import Dict, Any, Callable, Optional, List, Tuple
+from typing import Dict, Any, Callable, Optional, List
 from aleph_core.config import DB_PATH, JOURNALS_DIR
 from aleph_core.state.store import StateStore, SessionCheckpoint, CachedTaskResult
 from aleph_core.state.epistemic import EpistemicClaim, EpistemicStatus, VerificationGate
@@ -52,137 +30,73 @@ from aleph_core.hooks.pipeline import HookPipeline, HookPhase, HookEvent
 from aleph_core.security.aegis_shield import AegisShield
 from aleph_core.swarm.war_council import WarCouncilSwarm
 from aleph_core.evolution.demiurgo_loop import DemiurgoEvolutionEngine
-from aleph_core.verification.z3_prover import (
-    PolyglotBridgeAndIPPRReport,
-    PolyglotContractBridgeAndIncrementalPersonalizedPageRankProver,
-    SimHashCloneAndH2OCacheReport,
-    SimHashASTCloneDetectorAndHeavyHitterKVCacheProver,
-    TarjanSCCPyO3AndSpeculativeReport,
-    TarjanSCCCondensationPyO3GILDeadlockAndSpeculativeEditProver,
-    DominatorRadixKVAndWasmReport,
-    DominatorTreeBlastRadiusRadixKVAndWasmMemoryProver,
-    RowanCSTFalseSharingAndAttentionSinkReport,
-    RowanGreenRedCSTFalseSharingAndAttentionSinkProver,
-    PLDNGramAndBumpArenaReport,
-    PromptLookupNGramSpeculatorAndBumpArenaDropSoundnessProver,
-    SalsaRkyvAndChunkedPrefillReport,
-    SalsaEarlyCutoffRkyvAlignmentAndChunkedPrefillProver,
-    RoaringIoUringAndSnapKVReport,
-    RoaringBitmapReachabilityIoUringBarrierAndSnapKVPooledCacheProver,
-    EGraphPinProjectionAndPyramidKVReport,
-    EGraphEqualitySaturationPinProjectionAndPyramidKVProver,
-    HubLabelingEpochAndQuestKVReport,
-    PrunedLandmarkHubLabelingEpochReclamationAndQuestKVCacheProver,
-    StackGraphSIMDAndDuoAttentionReport,
-    StackGraphNameResolutionSIMDVectorizationAndDuoAttentionProver,
-    WaveletFMIndexMaybeUninitAndKIVIReport,
-    WaveletMatrixFMIndexMaybeUninitAndKIVIQuantizedCacheProver,
-    EulerTourTreeBorrowsAndMInferenceReport,
-    DynamicEulerTourConnectivityTreeBorrowsAndMInferenceProver,
-    DDlogZSetSendSyncAndYOCOReport,
-    DifferentialDatalogZSetSendSyncAndCrossLayerKVCacheProver,
-    AhoCorasickFFIAndMLAReport,
-    AhoCorasickAutomatonFFIUnwindAndMultiHeadLatentAttentionProver,
-    LinkCutTransmuteAndInfLLMReport,
-    SleatorTarjanLinkCutTreeTransmuteNicheAndInfLLMBlockMemoryProver,
-    ForwardPushStaticMutAndLokiReport,
-    ForwardPushLocalPageRankStaticMutAndLokiEigenKVProver,
-    FORAStrictProvenanceAndChunkKVReport,
-    FORABidirectionalPPRStrictProvenanceAndChunkKVProver,
-    ResAccPPRUnsafeCellAndMiniCacheReport,
-    ResAccResidueAccumulationPPRUnsafeCellAndMiniCacheSLERPProver,
-    ChebPPRSliceRawPartsAndRazorAttentionReport,
-    ChebyshevPolynomialPPRSliceRawPartsAndRazorAttentionProver,
-    SpectralSparsifierUnalignedAndAdaKVReport,
-    EffectiveResistanceSpectralSparsifierUnalignedPtrAndAdaKVProver,
-    BlockRankZSTAllocAndCLAKVReport,
-    BlockRankHierarchicalPPRZSTAllocAndCrossLayerAttentionProver,
-    QuadraticExtrapolationDeallocAndThinKReport,
-    QuadraticExtrapolationPPRDeallocLayoutAndThinKChannelProver,
-    GaussSeidelPPRCopyOverlapAndGEARReport,
-    GaussSeidelInPlacePPRCopyOverlapAndGEARKVProver,
-    ArnoldiKrylovPPRVecSetLenAndPaluKVReport,
-    ArnoldiKrylovPPRVecSetLenAndPaluLowRankKVProver,
-    AndersonPPRUtf8UncheckedAndKVQuantReport,
-    AndersonAcceleratedPPRUtf8UncheckedAndKVQuantPreRoPEProver,
-    RREPageRankBoxFromRawAndRetrievalAttentionReport,
-    RREVectorExtrapolationPPRBoxFromRawAndRetrievalAttentionProver,
-    InnerOuterPPRCStrAndShadowKVReport,
-    InnerOuterPPRCStrFromPtrAndShadowKVCacheProver,
-    AdaptivePPRManuallyDropAndGemFilterReport,
-    AdaptivePageRankManuallyDropAndGemFilterKVProver,
-    AitkenPPRNonNullAndFastGenReport,
-    AitkenDeltaSquaredPPRNonNullUncheckedAndFastGenKVProver,
-    LumpingPPRGetUncheckedAndSqueezeAttentionReport,
-    LumpingPageRankGetUncheckedAndSqueezeAttentionProver,
-    BlockTriangularPPRPackedAddrOfAndCAKEReport,
-    BlockTriangularSCCPPRPackedAddrOfAndCAKEProver,
-    BiCGSTABPPRWriteBytesAndKVCompressReport,
-    BiCGSTABPPRWriteBytesAndKVCompressProver,
-    ACLConductancePPRSwapNonOverlappingAndQFiltersReport,
-    AndersenChungLangConductancePPRSwapNonOverlappingAndQFiltersProver,
-    SpeedPPRPowerPushSliceRawMutAndL2NormKVReport,
-    SpeedPPRPowerPushSliceRawMutAndL2NormKVProver,
-    FISTAVariationalPPRVolatilePtrAndTOVAKVReport,
-    FISTAVariationalPPRVolatilePtrAndTOVAKVProver,
-    RBSPPRDropInPlaceAndScissorhandsKVReport,
-    RBSDegreeStratifiedPPRDropInPlaceAndScissorhandsKVProver,
-    TopPPRPtrReplaceAndKeyformerKVReport,
-    TopPPRPrecisionBoundsPtrReplaceAndKeyformerKVProver,
-    HeatKernelPPRPtrReadAndQuantScissorhands20xReport,
-    HeatKernelPPRPtrReadNonCopyAndQuantScissorhands20xProver,
-    BernNetPPRPtrWriteAndAeroSketchKVReport,
-    BernNetPolynomialPPRPtrWriteLeakAndAeroSketchKVProver,
-    ChebNetIIPPRWithoutProvenanceAndPersistentL2KVReport,
-    ChebNetIIInterpolationPPRWithoutProvenanceAndPersistentL2KVProver,
-    SublinearADDPPRGetDisjointMutAndDyadicTOVAKVReport,
-    SublinearADDPPRGetDisjointMutAndDyadicTOVAKVProver,
-    DynELMPPRVolatileSplittingAndQFilterL2KVReport,
-    DynELMStructuralPPRVolatileSplittingAndQFilterL2KVProver,
-)
-from aleph_core.verification.z3_prover import SemanticPatchEngine, SemanticPatchResult, CEGISRepairEngine, CEGISRepairResult, Z3VerificationEngine, ProgramDependencySlicer, SliceAndComplexityReport, PolyglotContractVerifier, PolyglotAuditResult
+import os as _aleph_boot_os
+_LAZY_Z3_PROVER_SYMBOLS = frozenset(('SemanticPatchEngine', 'SemanticPatchResult', 'CEGISRepairEngine', 'CEGISRepairResult', 'Z3VerificationEngine', 'ProgramDependencySlicer', 'SliceAndComplexityReport', 'PolyglotContractVerifier', 'PolyglotAuditResult', 'BambooRetiredLockEarlyReleaseCommitBarrierAndRococoDeferredPieceDAGProver', 'TicTocDataDrivenTimestampIntervalExtensionAndCicadaContentionAwareMVCCDAGProver', 'CaracalBatchAppendHotspotPieceSplittingAndBohmPlaceholderMVCCDAGProver', 'BlockSTMMVMemoryEstimateMarkerAndIncarnationValidationDAGProver', 'SiloThreePhaseOCCSortedWriteLockAndTIDWordValidationDAGProver', 'AriaDeterministicEpochBatchReservationAndConflictReorderingZero2PCDAGProver', 'SerializableSnapshotIsolationRWAntidependencyCycleAndPhantomPredicateLockDAGProver', 'EpochFencedLeaseWriteAheadLogGroupCommitAndLinearizableTruncateDAGProver', 'ByzantineQuorumCertificateThreeChainFinalityAndEquivocationSlashingDAGProver', 'DynamicQuorumJointConsensusReadIndexLeaseAndSplitBrainPreventionDAGProver', 'SagaPivotPhaseOrderingReverseTopologicalCompensationAndOutboxDAGProver', 'MazurkiewiczTraceEquivalenceOptimalDPORAndDiamondCommutativityDAGProver', 'DeficitRoundRobinMaxMinFairnessAndMultiTenantTokenQuotaIsolationDAGProver', 'ChandyLamportConsistentCausalCutAndDominoFreeRollbackRecoveryDAGProver', 'VectorClockCausalBarrierJoinSemilatticeReducerAndHedgedStragglerIdempotentDAGProver', 'CreditBasedBackpressureParksBoundedBufferAndChandyMisraHaasKnotFreeDAGProver', 'EDFWorkConservingLaxityAndWaitDieStarvationFreeDAGProver', 'CriticalPathBrentMakespanAndPriorityInheritanceHolBlockingFreeDAGProver', 'ContextCarryingActionIntentEpochFencedDeadSwitchAndNurseryCancellationProver', 'SpeculativeWaveReadWriteConflictMVMemoryAndCausalEdgeSynthesizerProver', 'PG18BTreeDeduplicationPostingListCompressionSupabaseRlsRealtimePresenceStateQuotaGuardAndZeroDowntimeColumnNotNullCheckValidationProver', 'PG18LogicalSlotFailoverSynchronizationSupabaseRlsMultiTenantWebhookReplayDefenseAndZeroDowntimeTablePartitionSplitMergeProver', 'PolyglotBridgeAndIPPRReport', 'PolyglotContractBridgeAndIncrementalPersonalizedPageRankProver', 'SimHashCloneAndH2OCacheReport', 'SimHashASTCloneDetectorAndHeavyHitterKVCacheProver', 'TarjanSCCPyO3AndSpeculativeReport', 'TarjanSCCCondensationPyO3GILDeadlockAndSpeculativeEditProver', 'DominatorRadixKVAndWasmReport', 'DominatorTreeBlastRadiusRadixKVAndWasmMemoryProver', 'RowanCSTFalseSharingAndAttentionSinkReport', 'RowanGreenRedCSTFalseSharingAndAttentionSinkProver', 'PLDNGramAndBumpArenaReport', 'PromptLookupNGramSpeculatorAndBumpArenaDropSoundnessProver', 'SalsaRkyvAndChunkedPrefillReport', 'SalsaEarlyCutoffRkyvAlignmentAndChunkedPrefillProver', 'RoaringIoUringAndSnapKVReport', 'RoaringBitmapReachabilityIoUringBarrierAndSnapKVPooledCacheProver', 'EGraphPinProjectionAndPyramidKVReport', 'EGraphEqualitySaturationPinProjectionAndPyramidKVProver', 'HubLabelingEpochAndQuestKVReport', 'PrunedLandmarkHubLabelingEpochReclamationAndQuestKVCacheProver', 'StackGraphSIMDAndDuoAttentionReport', 'StackGraphNameResolutionSIMDVectorizationAndDuoAttentionProver', 'WaveletFMIndexMaybeUninitAndKIVIReport', 'WaveletMatrixFMIndexMaybeUninitAndKIVIQuantizedCacheProver', 'EulerTourTreeBorrowsAndMInferenceReport', 'DynamicEulerTourConnectivityTreeBorrowsAndMInferenceProver', 'DDlogZSetSendSyncAndYOCOReport', 'DifferentialDatalogZSetSendSyncAndCrossLayerKVCacheProver', 'AhoCorasickFFIAndMLAReport', 'AhoCorasickAutomatonFFIUnwindAndMultiHeadLatentAttentionProver', 'LinkCutTransmuteAndInfLLMReport', 'SleatorTarjanLinkCutTreeTransmuteNicheAndInfLLMBlockMemoryProver', 'ForwardPushStaticMutAndLokiReport', 'ForwardPushLocalPageRankStaticMutAndLokiEigenKVProver', 'FORAStrictProvenanceAndChunkKVReport', 'FORABidirectionalPPRStrictProvenanceAndChunkKVProver', 'ResAccPPRUnsafeCellAndMiniCacheReport', 'ResAccResidueAccumulationPPRUnsafeCellAndMiniCacheSLERPProver', 'ChebPPRSliceRawPartsAndRazorAttentionReport', 'ChebyshevPolynomialPPRSliceRawPartsAndRazorAttentionProver', 'SpectralSparsifierUnalignedAndAdaKVReport', 'EffectiveResistanceSpectralSparsifierUnalignedPtrAndAdaKVProver', 'BlockRankZSTAllocAndCLAKVReport', 'BlockRankHierarchicalPPRZSTAllocAndCrossLayerAttentionProver', 'QuadraticExtrapolationDeallocAndThinKReport', 'QuadraticExtrapolationPPRDeallocLayoutAndThinKChannelProver', 'GaussSeidelPPRCopyOverlapAndGEARReport', 'GaussSeidelInPlacePPRCopyOverlapAndGEARKVProver', 'ArnoldiKrylovPPRVecSetLenAndPaluKVReport', 'ArnoldiKrylovPPRVecSetLenAndPaluLowRankKVProver', 'AndersonPPRUtf8UncheckedAndKVQuantReport', 'AndersonAcceleratedPPRUtf8UncheckedAndKVQuantPreRoPEProver', 'RREPageRankBoxFromRawAndRetrievalAttentionReport', 'RREVectorExtrapolationPPRBoxFromRawAndRetrievalAttentionProver', 'InnerOuterPPRCStrAndShadowKVReport', 'InnerOuterPPRCStrFromPtrAndShadowKVCacheProver', 'AdaptivePPRManuallyDropAndGemFilterReport', 'AdaptivePageRankManuallyDropAndGemFilterKVProver', 'AitkenPPRNonNullAndFastGenReport', 'AitkenDeltaSquaredPPRNonNullUncheckedAndFastGenKVProver', 'LumpingPPRGetUncheckedAndSqueezeAttentionReport', 'LumpingPageRankGetUncheckedAndSqueezeAttentionProver', 'BlockTriangularPPRPackedAddrOfAndCAKEReport', 'BlockTriangularSCCPPRPackedAddrOfAndCAKEProver', 'BiCGSTABPPRWriteBytesAndKVCompressReport', 'BiCGSTABPPRWriteBytesAndKVCompressProver', 'ACLConductancePPRSwapNonOverlappingAndQFiltersReport', 'AndersenChungLangConductancePPRSwapNonOverlappingAndQFiltersProver', 'SpeedPPRPowerPushSliceRawMutAndL2NormKVReport', 'SpeedPPRPowerPushSliceRawMutAndL2NormKVProver', 'FISTAVariationalPPRVolatilePtrAndTOVAKVReport', 'FISTAVariationalPPRVolatilePtrAndTOVAKVProver', 'RBSPPRDropInPlaceAndScissorhandsKVReport', 'RBSDegreeStratifiedPPRDropInPlaceAndScissorhandsKVProver', 'TopPPRPtrReplaceAndKeyformerKVReport', 'TopPPRPrecisionBoundsPtrReplaceAndKeyformerKVProver', 'HeatKernelPPRPtrReadAndQuantScissorhands20xReport', 'HeatKernelPPRPtrReadNonCopyAndQuantScissorhands20xProver', 'BernNetPPRPtrWriteAndAeroSketchKVReport', 'BernNetPolynomialPPRPtrWriteLeakAndAeroSketchKVProver', 'ChebNetIIPPRWithoutProvenanceAndPersistentL2KVReport', 'ChebNetIIInterpolationPPRWithoutProvenanceAndPersistentL2KVProver', 'SublinearADDPPRGetDisjointMutAndDyadicTOVAKVReport', 'SublinearADDPPRGetDisjointMutAndDyadicTOVAKVProver', 'DynELMPPRVolatileSplittingAndQFilterL2KVReport', 'DynELMStructuralPPRVolatileSplittingAndQFilterL2KVProver'))
 
-_SHARED_OMEGA_LOCK = threading.Lock()
-_SHARED_OMEGA_CACHE: Dict[str, Tuple[int, Any]] = {}
+class _LazyZ3Symbol:
+    __slots__ = ("_sym_name",)
+    def __init__(self, sym_name: str):
+        self._sym_name = sym_name
+    def _resolve(self):
+        import importlib as _imp
+        _mod = _imp.import_module("aleph_core.verification.z3_prover")
+        _val = getattr(_mod, self._sym_name)
+        globals()[self._sym_name] = _val
+        return _val
+    def __call__(self, *args, **kwargs):
+        return self._resolve()(*args, **kwargs)
+    def __getattr__(self, attr: str):
+        return getattr(self._resolve(), attr)
+    def __repr__(self) -> str:
+        return f"<LazyZ3Symbol {self._sym_name}>"
 
-
-def get_shared_omega_engine(vault_path: Optional[Path] = None) -> Any:
-    """Devuelve el singleton cacheado de AlephOmegaContinualSelfImprovementEngine (invalidado por st_mtime_ns)."""
-    from aleph_core.self_improvement import AlephOmegaContinualSelfImprovementEngine
-    base_dir = Path(__file__).resolve().parent.parent
-    resolved = (Path(vault_path) if vault_path else (base_dir / AlephOmegaContinualSelfImprovementEngine.DEFAULT_VAULT_REL_PATH)).resolve()
-    key = str(resolved)
-    mtime_ns = resolved.stat().st_mtime_ns if resolved.exists() else -1
-    with _SHARED_OMEGA_LOCK:
-        cached = _SHARED_OMEGA_CACHE.get(key)
-        if cached is not None and cached[0] == mtime_ns:
-            return cached[1]
-        eng = AlephOmegaContinualSelfImprovementEngine(vault_path=resolved)
-        new_mtime_ns = resolved.stat().st_mtime_ns if resolved.exists() else -1
-        _SHARED_OMEGA_CACHE[key] = (new_mtime_ns, eng)
-        return eng
+if _aleph_boot_os.environ.get("ALEPH_EAGER_LOAD_PROVERS") == "1":
+    import aleph_core.verification.z3_prover as _eager_z3_mod
+    for _sym in _LAZY_Z3_PROVER_SYMBOLS:
+        globals()[_sym] = getattr(_eager_z3_mod, _sym)
+else:
+    for _sym in _LAZY_Z3_PROVER_SYMBOLS:
+        globals()[_sym] = _LazyZ3Symbol(_sym)
 
 
 class AlephEngine:
     def __init__(self, engine_id: str = "aleph_sovereign_v2", db_path=DB_PATH):
         self.engine_id = engine_id
         self.state_store = StateStore(db_path=db_path)
-        db_p = Path(db_path).resolve()
-        custom_journals_dir = (
-            (db_p.parent / "journals")
-            if db_p != Path(DB_PATH).resolve()
-            else JOURNALS_DIR
-        )
-        self.journal = AgentJournal(agent_id=engine_id, base_dir=custom_journals_dir)
+        # Con un db_path explícito (p. ej. tests o instancias aisladas) el journal vive junto a esa base
+        # de datos; con el valor por defecto se conserva el directorio de datos del paquete.
+        _db = Path(db_path)
+        self.journal = (AgentJournal(agent_id=engine_id) if _db == Path(DB_PATH)
+                        else AgentJournal(agent_id=engine_id, base_dir=_db.parent / "journals"))
         self.memory = BicameralMemory(store=self.state_store)
         self.dispatcher = TaskDispatcher()
         self.cost_router = SovereignCostRouter()
         self.dag_scheduler = DynamicDAGScheduler()
-        self.patch_engine = SemanticPatchEngine()
-        self.cegis_engine = CEGISRepairEngine()
+        self._patch_engine = None
+        self._cegis_engine = None
         self.hooks = HookPipeline()
         self.evolution = DemiurgoEvolutionEngine(store=self.state_store, memory=self.memory)
         self._register_default_security_hooks()
+
+    @property
+    def patch_engine(self):
+        if self._patch_engine is None:
+            self._patch_engine = SemanticPatchEngine()
+        return self._patch_engine
+
+    @patch_engine.setter
+    def patch_engine(self, value) -> None:
+        self._patch_engine = value
+
+    @property
+    def cegis_engine(self):
+        if self._cegis_engine is None:
+            self._cegis_engine = CEGISRepairEngine()
+        return self._cegis_engine
+
+    @cegis_engine.setter
+    def cegis_engine(self, value) -> None:
+        self._cegis_engine = value
 
     def _register_default_security_hooks(self):
         def aegis_pre_dispatch(event: HookEvent) -> Optional[str]:
@@ -1039,7 +953,8 @@ class AlephEngine:
         shard_filter: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Consulta las 350+ reglas internas de la Bitácora mediante HippoRAG 2 Personalized PageRank + BM25."""
-        omega = get_shared_omega_engine()
+        from aleph_core.self_improvement import AlephOmegaContinualSelfImprovementEngine
+        omega = _get_cached_continual_learner()
         matches = omega.query_hipporag2_ppr(query=query, top_k=top_k, shard_filter=shard_filter)
         return {
             "status": "OK",
@@ -1055,7 +970,8 @@ class AlephEngine:
         top_k: int = 6,
     ) -> Dict[str, Any]:
         """Audita un plan o código contra las 350+ reglas internas de la Bitácora antes de ejecutar."""
-        omega = get_shared_omega_engine()
+        from aleph_core.self_improvement import AlephOmegaContinualSelfImprovementEngine
+        omega = _get_cached_continual_learner()
         return omega.enforce_pre_turn_bitacora_gate(code_or_plan=code_or_plan, top_k=top_k)
 
     def learn_new_experiential_bitacora_rule(
@@ -1068,7 +984,8 @@ class AlephEngine:
         persist_to_disk: bool = False,
     ) -> Dict[str, Any]:
         """Aprende y consolida una nueva regla en la Bitácora interna bajo bloqueo Merkle SHA-256 sin olvido."""
-        omega = get_shared_omega_engine()
+        from aleph_core.self_improvement import AlephOmegaContinualSelfImprovementEngine
+        omega = _get_cached_continual_learner()
         return omega.learn_experiential_rule(
             friction_or_error=friction_or_error,
             si_clause=si_clause,
@@ -1085,7 +1002,8 @@ class AlephEngine:
         persist_new_rule: bool = False,
     ) -> Dict[str, Any]:
         """Ejecuta el ciclo completo de automejora continua DGM + AlphaEvolve + TextGrad + Titans + HippoRAG 2."""
-        omega = get_shared_omega_engine()
+        from aleph_core.self_improvement import AlephOmegaContinualSelfImprovementEngine
+        omega = _get_cached_continual_learner()
         return omega.run_omega_self_improvement_cycle(
             task_description=task_description,
             observed_friction=observed_friction,
@@ -1094,8 +1012,38 @@ class AlephEngine:
 
     def get_internal_bitacora_vault_telemetry(self) -> Dict[str, Any]:
         """Devuelve la telemetría completa de la Bóveda Nativa de Bitácora y su cadena Merkle anti-olvido."""
-        omega = get_shared_omega_engine()
+        from aleph_core.self_improvement import AlephOmegaContinualSelfImprovementEngine
+        omega = _get_cached_continual_learner()
         return omega.get_vault_telemetry()
+
+
+
+_SHARED_BITACORA_CACHE = {"inst": None, "sig": None}
+
+def _get_cached_continual_learner():
+    import os as _os
+    from pathlib import Path as _Path
+    from aleph_core.self_improvement.omega_continual_learner import AlephOmegaContinualSelfImprovementEngine
+    vault_p = _Path(__file__).resolve().parent.parent / ".aleph" / "BITACORA_MASTER_VAULT_V33.json"
+    sig = None
+    if vault_p.exists():
+        try:
+            st = vault_p.stat()
+            sig = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            sig = None
+    cached = _SHARED_BITACORA_CACHE.get("inst")
+    if cached is not None and sig is not None and _SHARED_BITACORA_CACHE.get("sig") == sig:
+        return cached
+    inst = AlephOmegaContinualSelfImprovementEngine()
+    _SHARED_BITACORA_CACHE["inst"] = inst
+    if inst.vault_path and inst.vault_path.exists():
+        try:
+            st = inst.vault_path.stat()
+            _SHARED_BITACORA_CACHE["sig"] = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            _SHARED_BITACORA_CACHE["sig"] = sig
+    return inst
 
 
 class AlephUniversalMCPServer:
@@ -8198,10 +8146,28 @@ class AlephUniversalMCPServer:
                     }
                 }
             elif method == "tools/list":
+                import os as _os
+                profile = str(params.get("profile") or _os.environ.get("ALEPH_MCP_PROFILE", "full")).lower()
+                all_tools = self.get_tools_manifest()
+                if profile == "core":
+                    core_names = {
+                        "aleph_verify_and_repair",
+                        "aleph_apply_semantic_patch",
+                        "aleph_run_optimality_tournament",
+                        "aleph_bitacora_query_hipporag2_ppr",
+                        "aleph_bitacora_enforce_pre_turn_gate",
+                        "aleph_bitacora_learn_experiential_rule",
+                        "aleph_omega_dgm_alphaevolve_self_improve",
+                        "aleph_bitacora_vault_status_and_telemetry",
+                        "aleph_prove_omega_continual_self_improvement_hipporag2_titans_zero_forgetting_and_bitacora_vault",
+                    }
+                    filtered_tools = [t for t in all_tools if t["name"] in core_names]
+                else:
+                    filtered_tools = all_tools
                 return {
                     "jsonrpc": "2.0",
                     "id": req_id,
-                    "result": {"tools": self.get_tools_manifest()}
+                    "result": {"tools": filtered_tools}
                 }
             elif method == "tools/call":
                 tool_name = params.get("name")
@@ -16530,7 +16496,8 @@ class AlephUniversalMCPServer:
                 simulate_tamper_or_forgetting=bool(args.get("simulate_tamper_or_forgetting", False)),
             ).to_dict()
         elif tool_name == "aleph_bitacora_query_hipporag2_ppr":
-            eng_omega = get_shared_omega_engine()
+            from .self_improvement import AlephOmegaContinualSelfImprovementEngine
+            eng_omega = _get_cached_continual_learner()
             return {
                 "status": "OK",
                 "total_vault_rules": len(eng_omega.rules),
@@ -16541,13 +16508,15 @@ class AlephUniversalMCPServer:
                 ),
             }
         elif tool_name == "aleph_bitacora_enforce_pre_turn_gate":
-            eng_omega = get_shared_omega_engine()
+            from .self_improvement import AlephOmegaContinualSelfImprovementEngine
+            eng_omega = _get_cached_continual_learner()
             return eng_omega.enforce_rules_on_code_or_plan(
                 code_or_plan=str(args.get("code_or_plan", "")),
                 top_k=int(args.get("top_k", 10)),
             )
         elif tool_name == "aleph_bitacora_learn_experiential_rule":
-            eng_omega = get_shared_omega_engine()
+            from .self_improvement import AlephOmegaContinualSelfImprovementEngine
+            eng_omega = _get_cached_continual_learner()
             return eng_omega.learn_experiential_rule(
                 friction_or_error=str(args.get("friction_or_error", "")),
                 si_clause=str(args.get("si_clause", "")),
@@ -16557,14 +16526,16 @@ class AlephUniversalMCPServer:
                 persist_to_disk=bool(args.get("persist_to_disk", False)),
             )
         elif tool_name == "aleph_omega_dgm_alphaevolve_self_improve":
-            eng_omega = get_shared_omega_engine()
+            from .self_improvement import AlephOmegaContinualSelfImprovementEngine
+            eng_omega = _get_cached_continual_learner()
             return eng_omega.run_omega_self_improvement_cycle(
                 task_description=str(args.get("task_description", "Ciclo de automejora continua El Aleph v33.0.0")),
-                observed_friction=args.get("observed_friction") or "",
+                observed_friction=args.get("observed_friction"),
                 persist_new_rule=bool(args.get("persist_new_rule", False)),
             ).to_dict()
         elif tool_name == "aleph_bitacora_vault_status_and_telemetry":
-            eng_omega = get_shared_omega_engine()
+            from .self_improvement import AlephOmegaContinualSelfImprovementEngine
+            eng_omega = _get_cached_continual_learner()
             chain_ok, merkle_root, violations = eng_omega.verify_zero_forgetting_merkle_chain()
             return {
                 "status": "OK" if chain_ok else "TAMPER_DETECTED",
@@ -16654,183 +16625,176 @@ class AlephUniversalMCPServer:
             "scopes_supported": ["mcp:tools", "openid", "profile"],
         }
 
-    def serve_http(self, host: str = "127.0.0.1", port: int = 8765):
+    def serve_http(self, host: str = "127.0.0.1", port: int = 8765, token: Optional[str] = None,
+                   _return_server: bool = False, socket_timeout: float = 10.0, max_workers: int = 16):
         """
-        Servidor MCP Streamable HTTP (JSON-RPC 2.0 sobre POST /mcp y GET /health)
-        + OAuth 2.0 Dynamic Client Registration (RFC 7591 / RFC 8414) compatible con
-        Gemini Web Connected Apps (Add a custom app), Claude Web, n8n y túneles Cloudflare.
-        """
-        import json
-        import secrets
-        import time
-        import urllib.parse
-        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-        mcp_instance = self
-        max_http_body_bytes = 10 * 1024 * 1024
-        allowed_hosts = {"127.0.0.1", "localhost", "::1", "gemini.google.com", "aistudio.google.com", "oauth-redirect.googleusercontent.com", "oauth-redirect-sandbox.googleusercontent.com", "oauth-redirect-test.googleusercontent.com"}
+        Servidor MCP Streamable HTTP (JSON-RPC 2.0 sobre POST /mcp, GET /health).
 
-        def _is_allowed_uri(uri_str: str) -> bool:
+        Seguridad (v33.0.1):
+          * `POST /mcp` exige `Authorization: Bearer <token>` (comparación en tiempo constante).
+            Token: argumento `token`, variable `ALEPH_MCP_TOKEN`, o uno aleatorio generado al
+            arrancar y guardado en `.aleph/.mcp_token` (permisos 0600).
+          * Valida `Host` (anti DNS-rebinding) y `Origin`. Sin CORS abierto: solo se refleja un
+            Origin presente en `ALEPH_MCP_ALLOWED_ORIGINS` (lista separada por comas).
+          * Solo `POST /mcp`; cualquier otra ruta POST devuelve 404. Cuerpo máximo 1 MiB.
+          * El OAuth/DCR anterior emitía tokens a cualquiera sin autenticar y se eliminó (501).
+        """
+        import hmac
+        import json
+        import os
+        import secrets
+        import sys as _sys
+        from pathlib import Path as _Path
+        import socket as _socket
+        import threading as _threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        mcp_instance = self
+        max_body = 1024 * 1024
+
+        if token is None:
+            token = os.environ.get("ALEPH_MCP_TOKEN") or ""
+        if not token:
+            token = secrets.token_urlsafe(32)
+            token_path = _Path(__file__).resolve().parent.parent / ".aleph" / ".mcp_token"
             try:
-                p = urllib.parse.urlparse(uri_str)
-            except Exception:
-                return False
-            if p.scheme not in ("http", "https") or not p.hostname:
-                return False
-            hn = p.hostname.lower()
-            if p.scheme == "http" and hn not in ("127.0.0.1", "localhost", "::1"):
-                return False
-            return hn in allowed_hosts or hn.endswith(".googleusercontent.com")
+                token_path.parent.mkdir(parents=True, exist_ok=True)
+                fd = os.open(str(token_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(token + "\n")
+                print(f"Token MCP generado en {token_path} (permisos 0600).", file=_sys.stderr)
+            except OSError as exc:
+                print(f"No se pudo persistir el token MCP ({exc}); define ALEPH_MCP_TOKEN.", file=_sys.stderr)
+        token_bytes = token.encode("utf-8")
+
+        allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+        allowed_hosts |= {h.strip() for h in os.environ.get("ALEPH_MCP_ALLOWED_HOSTS", "").split(",") if h.strip()}
+        allowed_origins = {o.strip() for o in os.environ.get("ALEPH_MCP_ALLOWED_ORIGINS", "").split(",") if o.strip()}
 
         class MCPHTTPHandler(BaseHTTPRequestHandler):
-            def _base_url(self) -> str:
-                proto = self.headers.get("X-Forwarded-Proto", "http")
-                host_hdr = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or f"{host}:{port}"
-                return f"{proto}://{host_hdr}"
-
-            def _allowed_origin(self) -> str:
-                origin = self.headers.get("Origin", "")
-                if origin:
-                    try:
-                        p = urllib.parse.urlparse(origin)
-                        if p.hostname and (p.hostname.lower() in allowed_hosts or p.hostname.lower().endswith(".googleusercontent.com")):
-                            return origin
-                    except Exception:
-                        pass
-                return f"http://{host}:{port}"
-
-            def _send_json(self, status_code: int, payload: Dict[str, Any]):
+            timeout = float(socket_timeout)
+            def _send_json(self, status_code: int, payload: Dict[str, Any], extra: Optional[Dict[str, str]] = None):
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(status_code)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", self._allowed_origin())
-                self.send_header("Vary", "Origin")
-                self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, MCP-Protocol-Version")
-                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                origin = self.headers.get("Origin")
+                if origin and origin in allowed_origins:
+                    self.send_header("Access-Control-Allow-Origin", origin)
+                    self.send_header("Vary", "Origin")
+                    self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, MCP-Protocol-Version")
+                    self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
                 self.send_header("MCP-Protocol-Version", "2025-06-18")
+                for k, v in (extra or {}).items():
+                    self.send_header(k, v)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _host_origin_ok(self) -> bool:
+                if self.headers.get("Host", "") not in allowed_hosts:
+                    self._send_json(403, {"error": "host_not_allowed"})
+                    return False
+                origin = self.headers.get("Origin")
+                if origin and origin not in allowed_origins:
+                    self._send_json(403, {"error": "origin_not_allowed"})
+                    return False
+                return True
+
+            def _bearer_ok(self) -> bool:
+                auth = self.headers.get("Authorization", "")
+                presented = auth[7:].strip().encode("utf-8") if auth.lower().startswith("bearer ") else b""
+                if presented and hmac.compare_digest(presented, token_bytes):
+                    return True
+                self._send_json(401, {"error": "unauthorized"}, {"WWW-Authenticate": 'Bearer realm="aleph-mcp"'})
+                return False
+
             def do_OPTIONS(self):
+                if not self._host_origin_ok():
+                    return
                 self._send_json(200, {"status": "ok"})
 
             def do_GET(self):
-                parsed = urllib.parse.urlparse(self.path)
-                path = parsed.path
-                base = self._base_url()
-
+                if not self._host_origin_ok():
+                    return
+                path = self.path.split("?", 1)[0]
                 if path in ("/health", "/mcp/health"):
-                    self._send_json(200, {
-                        "status": "ok",
-                        "server": "el-aleph-sovereign-mcp",
-                        "version": "33.0.0",
-                        "studio_url": f"{base}/studio",
-                        "oauth_dcr_enabled": True,
-                        "tools_count": len(mcp_instance.get_tools_manifest())
-                    })
-                elif path == "/studio":
-                    from aleph_core.verification import FullStackBlueprintScaffolderAndStudioEngine
-                    bundle = FullStackBlueprintScaffolderAndStudioEngine.scaffold_verified_app(
-                        app_name="AlephUniversalStudio",
-                        table_name="studio_projects",
-                        fields=[
-                            {"name": "project_name", "type": "string", "label": "Proyecto"},
-                            {"name": "stack", "type": "string", "label": "Stack"},
-                            {"name": "formal_proofs", "type": "number", "label": "Motores Formales"}
-                        ]
-                    )
-                    raw_html = bundle.interactive_preview_html.encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/html; charset=utf-8")
-                    self.send_header("Content-Length", str(len(raw_html)))
-                    self.end_headers()
-                    self.wfile.write(raw_html)
-                elif path == "/.well-known/oauth-authorization-server":
-                    self._send_json(200, mcp_instance.get_oauth_metadata(base))
-                elif path == "/.well-known/oauth-protected-resource":
-                    self._send_json(200, {
-                        "resource": f"{base}/mcp",
-                        "authorization_servers": [base],
-                        "bearer_methods_supported": ["header"],
-                        "scopes_supported": ["mcp:tools"]
-                    })
-                elif path == "/oauth/authorize":
-                    qs = urllib.parse.parse_qs(parsed.query)
-                    redirect_uri = qs.get("redirect_uri", [""])[0]
-                    state = qs.get("state", [""])[0]
-                    code = f"aleph_auth_{secrets.token_urlsafe(16)}"
-                    if redirect_uri:
-                        if not _is_allowed_uri(redirect_uri):
-                            self._send_json(400, {"error": "invalid_redirect_uri", "message": "redirect_uri fuera de lista blanca OAuth"})
-                            return
-                        sep = "&" if "?" in redirect_uri else "?"
-                        target = f"{redirect_uri}{sep}code={urllib.parse.quote(code)}"
-                        if state:
-                            target += f"&state={urllib.parse.quote(state)}"
-                        self.send_response(302)
-                        self.send_header("Location", target)
-                        self.end_headers()
-                    else:
-                        self._send_json(200, {"code": code, "state": state})
+                    self._send_json(200, {"status": "ok", "server": "el-aleph-sovereign-mcp", "version": "33.0.1"})
+                elif path.startswith("/oauth") or path.startswith("/.well-known/oauth"):
+                    self._send_json(501, {"error": "oauth_disabled",
+                                          "detail": "Usa Authorization: Bearer <ALEPH_MCP_TOKEN>."})
                 else:
-                    self._send_json(404, {"error": "Not found", "path": path})
+                    self._send_json(404, {"error": "not_found"})
 
             def do_POST(self):
-                parsed = urllib.parse.urlparse(self.path)
-                path = parsed.path
+                if not self._host_origin_ok():
+                    return
+                path = self.path.split("?", 1)[0]
+                if path.startswith("/oauth"):
+                    self._send_json(501, {"error": "oauth_disabled",
+                                          "detail": "Usa Authorization: Bearer <ALEPH_MCP_TOKEN>."})
+                    return
+                if path != "/mcp":
+                    self._send_json(404, {"error": "not_found"})
+                    return
+                if not self._bearer_ok():
+                    return
                 try:
                     length = int(self.headers.get("Content-Length", 0))
                 except ValueError:
-                    self._send_json(400, {"error": "invalid_content_length"})
+                    length = -1
+                if length < 0 or length > max_body:
+                    self._send_json(413, {"error": "payload_too_large", "max_bytes": max_body})
                     return
-                if length < 0:
-                    self._send_json(400, {"error": "invalid_content_length"})
+                try:
+                    raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+                except (_socket.timeout, TimeoutError):
+                    self.close_connection = True
+                    self._send_json(408, {"error": "request_timeout"})
                     return
-                if length > max_http_body_bytes:
-                    self._send_json(413, {"error": "payload_too_large", "max_bytes": max_http_body_bytes})
+                try:
+                    req = json.loads(raw)
+                except Exception:
+                    self._send_json(400, {"jsonrpc": "2.0", "id": None,
+                                          "error": {"code": -32700, "message": "Parse error"}})
                     return
-                raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
-
-                if path == "/oauth/register":
-                    try:
-                        req_data = json.loads(raw) if raw else {}
-                    except Exception:
-                        req_data = {}
-                    client_id = f"dyn_aleph_{secrets.token_hex(8)}"
-                    default_redirects = [
-                        "https://gemini.google.com/oauth-redirect",
-                        "https://oauth-redirect.googleusercontent.com",
-                        "https://oauth-redirect-sandbox.googleusercontent.com",
-                        "https://oauth-redirect-test.googleusercontent.com",
-                    ]
-                    raw_redirects = req_data.get("redirect_uris", default_redirects)
-                    redirect_uris = [u for u in raw_redirects if isinstance(u, str) and _is_allowed_uri(u)] or default_redirects
-                    self._send_json(201, {
-                        "client_id": client_id,
-                        "client_id_issued_at": int(time.time()),
-                        "redirect_uris": redirect_uris,
-                        "grant_types": req_data.get("grant_types", ["authorization_code", "refresh_token"]),
-                        "response_types": req_data.get("response_types", ["code"]),
-                        "token_endpoint_auth_method": req_data.get("token_endpoint_auth_method", "none"),
-                    })
-                elif path == "/oauth/token":
-                    self._send_json(200, {
-                        "access_token": f"aleph_mcp_token_{secrets.token_urlsafe(24)}",
-                        "token_type": "Bearer",
-                        "expires_in": 86400,
-                        "refresh_token": f"aleph_refresh_{secrets.token_urlsafe(24)}",
-                        "scope": "mcp:tools",
-                    })
-                else:
-                    try:
-                        req = json.loads(raw)
-                        resp = mcp_instance.handle_jsonrpc_request(req)
-                        self._send_json(200, resp)
-                    except Exception as ex:
-                        self._send_json(400, {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": str(ex)}})
+                try:
+                    self._send_json(200, mcp_instance.handle_jsonrpc_request(req))
+                except Exception:
+                    self._send_json(500, {"jsonrpc": "2.0", "id": req.get("id") if isinstance(req, dict) else None,
+                                          "error": {"code": -32603, "message": "Internal error"}})
 
             def log_message(self, format, *args):
                 return
 
-        httpd = ThreadingHTTPServer((host, port), MCPHTTPHandler)
+        class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+            daemon_threads = True
+            allow_reuse_address = True
+
+            def __init__(self, server_address, RequestHandlerClass):
+                super().__init__(server_address, RequestHandlerClass)
+                self._sem = _threading.BoundedSemaphore(max_workers)
+
+            def process_request(self, request, client_address):
+                if not self._sem.acquire(blocking=False):
+                    try:
+                        request.sendall(
+                            b'HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: 27\r\n\r\n{"error":"server_busy_503"}'
+                        )
+                    except Exception:
+                        pass
+                    self.shutdown_request(request)
+                    return
+                super().process_request(request, client_address)
+
+            def process_request_thread(self, request, client_address):
+                try:
+                    super().process_request_thread(request, client_address)
+                finally:
+                    self._sem.release()
+
+        httpd = BoundedThreadingHTTPServer((host, port), MCPHTTPHandler)
+        actual_port = httpd.server_address[1]
+        allowed_hosts.update({f"127.0.0.1:{actual_port}", f"localhost:{actual_port}", f"[::1]:{actual_port}"})
+        if _return_server:
+            return httpd
         httpd.serve_forever()

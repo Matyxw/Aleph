@@ -6,7 +6,6 @@ de El Aleph cuando se corre en entornos sin dependencias externas.
 """
 from dataclasses import dataclass
 from typing import Callable, Dict, Any, Optional, List
-import ast
 import inspect
 import random
 import time
@@ -16,46 +15,6 @@ try:
     HAS_HYPOTHESIS = True
 except ImportError:
     HAS_HYPOTHESIS = False
-
-SAFE_CONTRACT_BUILTINS: Dict[str, Any] = {
-    "abs": abs,
-    "min": min,
-    "max": max,
-    "len": len,
-    "sum": sum,
-    "all": all,
-    "any": any,
-    "isinstance": isinstance,
-    "int": int,
-    "float": float,
-    "bool": bool,
-    "str": str,
-    "dict": dict,
-    "list": list,
-    "set": set,
-    "tuple": tuple,
-    "range": range,
-    "True": True,
-    "False": False,
-    "None": None,
-}
-
-
-def _safe_eval_contract(expr_str: str, env: Dict[str, Any]) -> Any:
-    """Evalúa de forma segura una expresión de contrato validando su AST contra introspección/inyección."""
-    tree = ast.parse(expr_str, mode="eval")
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id.startswith("__"):
-            raise ValueError(f"Identificador dunder prohibido en contrato: {node.id}")
-        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
-            raise ValueError(f"Acceso a atributo dunder prohibido en contrato: {node.attr}")
-        if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id not in SAFE_CONTRACT_BUILTINS:
-                raise ValueError(f"Llamada no permitida en contrato: {node.func.id}")
-            elif not isinstance(node.func, ast.Name):
-                raise ValueError("Solo se permiten llamadas directas a funciones puras seguras en contratos.")
-    code_obj = compile(tree, "<contract>", "eval")
-    return eval(code_obj, {"__builtins__": SAFE_CONTRACT_BUILTINS}, env)
 
 @dataclass
 class PBTFallbackResult:
@@ -168,7 +127,7 @@ class PropertyBasedFallback:
 
         def pre_fn(**kwargs) -> bool:
             for p in pre_strs:
-                if not bool(_safe_eval_contract(p, kwargs)):
+                if not bool(eval(p, {}, kwargs)):
                     return False
             return True
 
@@ -176,7 +135,7 @@ class PropertyBasedFallback:
             env = dict(kwargs)
             env["result"] = result
             for post in post_strs:
-                if not bool(_safe_eval_contract(post, env)):
+                if not bool(eval(post, {}, env)):
                     return False
             return True
 

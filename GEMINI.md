@@ -12,8 +12,9 @@
   - `.aleph` (`World Designer V7`): Bóveda Activa, 8 Escenarios SVG Procedimentales, Oráculo DOM Estático, Compilador OKLCH y Compuerta Out-of-Band (`CODER != TESTER`).
 
 ## Activación Automática en Google Antigravity
-1. El servidor MCP `el-aleph-sovereign` se carga automáticamente desde `.mcp.json`, `.antigravity/mcp_config.json` y `.gemini/settings.json` con `trust: true`.
-2. Para instalar globalmente en el perfil del usuario de Google Antigravity y arrancar el daemon HTTP persistente (`127.0.0.1:8765`), ejecutar:
+1. El servidor MCP `el-aleph-sovereign` se carga desde `.mcp.json`, `.antigravity/mcp_config.json` y `.gemini/settings.json` con `trust: false`: solo 9 tools de solo-lectura se auto-aprueban; el resto pide confirmación.
+2. La instalación en el perfil global del usuario es **opt-in**:
    ```bash
-   python3 aleph_cli.py antigravity-always-on
+   python3 aleph_cli.py antigravity-always-on --install-user-home
    ```
+   El daemon HTTP no se autoarranca. Si lo necesitás: `python3 aleph_cli.py mcp-http` (exige `Authorization: Bearer <token>`; el token se guarda en `.aleph/.mcp_token` o se fija con `ALEPH_MCP_TOKEN`).

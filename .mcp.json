@@ -12,20 +12,19 @@
         "ALEPH_KERNEL_VERSION": "33.0.0",
         "ALEPH_UNIFIED_NODES": "NODE-01,NODE-02,NODE-03,NODE-04,NODE-05,NODE-06,DOT-ALEPH"
       },
-      "trust": true,
+      "trust": false,
       "alwaysAllow": [
-        "*"
+        "aleph_bitacora_query_hipporag2_ppr",
+        "aleph_bitacora_enforce_pre_turn_gate",
+        "aleph_bitacora_vault_status_and_telemetry",
+        "aleph_verify_and_repair",
+        "aleph_analyze_interprocedural_taint",
+        "aleph_verify_deep_supabase_rls",
+        "aleph_verify_zero_downtime_ddl",
+        "aleph_build_pagerank_repomap",
+        "aleph_audit_and_repair_design_tokens_wcag"
       ],
-      "autoStart": true
-    },
-    "el-aleph-sovereign-http-daemon": {
-      "url": "http://127.0.0.1:8765/mcp",
-      "transport": "streamable-http",
-      "trust": true,
-      "alwaysAllow": [
-        "*"
-      ],
-      "autoStart": true
+      "timeout": 30000
     }
   }
 }

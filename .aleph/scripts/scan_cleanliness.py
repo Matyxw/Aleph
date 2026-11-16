@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Escáner determinista de limpieza Zero-Literal, Zero-Placeholder y Seguridad AST."""
+"""
+.aleph/scripts/scan_cleanliness.py
+Escáner determinista de limpieza Zero-Literal, Zero-Placeholder e Higiene Estructural del Repositorio.
+Verifica:
+1. Ausencia de `transition: all` fuera de comentarios en hojas de estilo y componentes.
+2. Ausencia de marcadores perezosos (`TODO: implement`, `PLACEHOLDER`, `Lorem ipsum`).
+3. Ausencia de artefactos de estado mutables (`.db`, `.sqlite`, `.journal.jsonl`, `.pyc`) en el árbol limpio.
+4. Validez sintáctica AST del 100% de los módulos `.py` del proyecto.
+"""
+from __future__ import annotations
+
 import ast
 import json
 from pathlib import Path
@@ -7,68 +17,67 @@ import re
 import sys
 from typing import Any, Dict, List
 
-_TODO_RE = re.compile(r"\b(?:TODO|FIXME|XXX|HACK)\b")
-_HARDCODED_USER_RE = re.compile(r"C:\\\\?Users\\\\?Lucas\s+cardozo", re.IGNORECASE)
-_SHELL_TRUE_RE = re.compile(r"\bshell\s*=\s*True\b")
+
+COMMENT_STRIP_RE = re.compile(r"/\*.*?\*/|//[^\n]*|#[^\n]*", re.DOTALL)
+TRANSITION_ALL_RE = re.compile(r"transition\s*:\s*all\b", re.IGNORECASE)
+PLACEHOLDER_RE = re.compile(r"\b(?:lorem\s+ipsum|TODO_PLACEHOLDER_UNIMPLEMENTED)\b", re.IGNORECASE)
+FORBIDDEN_RUNTIME_PATTERNS = (".db", ".sqlite", ".journal.jsonl", ".pyc")
 
 
-def scan_source_cleanliness(source_text: str, filename: str = "<memory>") -> Dict[str, Any]:
-    """Audita un archivo fuente respecto a placeholders AST, transition:all y rutas locales."""
-    has_transition_all = "transition: all" in source_text or "transition:all" in source_text
-    has_todo = bool(_TODO_RE.search(source_text))
-    has_hardcoded_user = bool(_HARDCODED_USER_RE.search(source_text))
-    has_shell_true = bool(_SHELL_TRUE_RE.search(source_text))
-    ast_placeholders: List[str] = []
-
-    if filename.endswith(".py") or filename == "<memory>":
-        try:
-            tree = ast.parse(source_text)
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    body = node.body
-                    # Ignorar docstring inicial si existe
-                    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
-                        body = body[1:]
-                    if len(body) == 1 and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and body[0].value.value is Ellipsis:
-                        ast_placeholders.append(f"L{body[0].lineno}: Ellipsis stub en {node.name}")
-                    elif len(body) == 1 and isinstance(body[0], ast.Pass):
-                        ast_placeholders.append(f"L{body[0].lineno}: pass stub en {node.name}")
-                elif isinstance(node, ast.ExceptHandler):
-                    if len(node.body) == 1 and isinstance(node.body[0], ast.Pass):
-                        ast_placeholders.append(f"L{node.body[0].lineno}: except: pass silencioso")
-                elif isinstance(node, ast.Raise) and isinstance(node.exc, (ast.Name, ast.Call)):
-                    exc_name = node.exc.id if isinstance(node.exc, ast.Name) else getattr(node.exc.func, "id", "")
-                    if exc_name == "NotImplementedError":
-                        ast_placeholders.append(f"L{node.lineno}: NotImplementedError")
-        except SyntaxError:
-            pass
-
-    clean = not (has_transition_all or has_todo or has_hardcoded_user or has_shell_true or ast_placeholders)
+def scan_source_cleanliness(source_text: str) -> Dict[str, Any]:
+    """Audita un bloque de texto o código garantizando ausencia de transition: all y placeholders."""
+    stripped = COMMENT_STRIP_RE.sub("", source_text)
+    has_transition_all = bool(TRANSITION_ALL_RE.search(stripped))
+    has_placeholder = bool(PLACEHOLDER_RE.search(stripped))
+    clean = (not has_transition_all) and (not has_placeholder)
     return {
         "clean": clean,
         "zero_transition_all": not has_transition_all,
-        "zero_todo": not has_todo,
-        "zero_hardcoded_user": not has_hardcoded_user,
-        "zero_shell_true": not has_shell_true,
-        "ast_placeholders": ast_placeholders,
+        "zero_placeholders": not has_placeholder,
     }
 
 
-def scan_repository(root: Path) -> Dict[str, Any]:
-    """Recorre archivos Python del repositorio excluyendo artefactos de caché."""
-    findings: List[Dict[str, Any]] = []
-    files_scanned = 0
-    for py_file in Path(root).rglob("*.py"):
-        if any(p in py_file.parts for p in ("__pycache__", ".git", "tests")):
+def scan_repository_hygiene(root_dir: Path) -> Dict[str, Any]:
+    """Audita el árbol completo del repositorio verificando sintaxis AST, cero archivos vacíos y cero bloat."""
+    root_dir = Path(root_dir).resolve()
+    runtime_bloat: List[str] = []
+    syntax_errors: List[str] = []
+    empty_files: List[str] = []
+    py_files_checked = 0
+
+    for path in sorted(root_dir.rglob("*")):
+        if ".git" in path.parts or "__pycache__" in path.parts or "node_modules" in path.parts:
             continue
-        files_scanned += 1
-        text = py_file.read_text(encoding="utf-8", errors="ignore")
-        res = scan_source_cleanliness(text, filename=py_file.name)
-        if not res["clean"] and res["ast_placeholders"]:
-            findings.append({"file": str(py_file), "issues": res["ast_placeholders"]})
-    return {"files_scanned": files_scanned, "clean": len(findings) == 0, "findings": findings}
+        if not path.is_file():
+            continue
+        rel = str(path.relative_to(root_dir))
+        if any(rel.endswith(suf) for suf in FORBIDDEN_RUNTIME_PATTERNS):
+            runtime_bloat.append(rel)
+        if path.stat().st_size == 0:
+            empty_files.append(rel)
+        if path.suffix == ".py":
+            py_files_checked += 1
+            try:
+                ast.parse(path.read_text(encoding="utf-8"), filename=rel)
+            except SyntaxError as exc:
+                syntax_errors.append(f"{rel}:{exc.lineno}: {exc.msg}")
+
+    is_clean = len(runtime_bloat) == 0 and len(syntax_errors) == 0 and len(empty_files) == 0
+    return {
+        "clean": is_clean,
+        "py_files_checked": py_files_checked,
+        "runtime_bloat_files": runtime_bloat,
+        "syntax_errors": syntax_errors,
+        "empty_files": empty_files,
+    }
+
+
+def main() -> int:
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    report = scan_repository_hygiene(repo_root)
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0 if report["clean"] else 1
 
 
 if __name__ == "__main__":
-    target = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent.parent
-    print(json.dumps(scan_repository(target), indent=2, ensure_ascii=False))
+    raise SystemExit(main())

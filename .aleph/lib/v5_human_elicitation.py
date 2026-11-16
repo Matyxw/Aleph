@@ -2,7 +2,7 @@
 """
 ALEPH ELICITATION & DECISION GOVERNANCE ENGINE (v5)
 Módulo Soberano de Alineación de Intención, Detección Discovery-First y Matriz Bezos
-Ruta: .aleph/lib/v5_human_elicitation.py
+Ruta: .aleph\\lib\\v5_human_elicitation.py
 Doctrina: EL DEMIURGO - 100% Verificación, Primeros Principios, Cero Sycophancy
 """
 

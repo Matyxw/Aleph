@@ -11,17 +11,27 @@ Doctrina: EL DEMIURGO - 100% Tests Verificados y Cero Margen de Error
 import sys
 import math
 from pathlib import Path
+import unittest
+import contextlib
+import re as _re
 try:
     import pytest
-    _raises = pytest.raises
 except ImportError:
-    import unittest as _unittest
-    _tc = _unittest.TestCase()
+    class _PytestShim:
+        @staticmethod
+        @contextlib.contextmanager
+        def raises(exc_type, match=None):
+            try:
+                yield
+            except exc_type as exc:
+                if match is not None and not _re.search(match, str(exc)):
+                    raise AssertionError(f"Regex {match!r} did not match {str(exc)!r}")
+                return
+            raise AssertionError(f"Did not raise {exc_type}")
+    pytest = _PytestShim()
 
-    def _raises(exc_type, match=None):  # type: ignore[misc]
-        return _tc.assertRaisesRegex(exc_type, match) if match else _tc.assertRaises(exc_type)
 
-# Asegurar path portable a .aleph
+# Asegurar path a .aleph
 ALEPH_ROOT = Path(__file__).resolve().parent.parent
 if str(ALEPH_ROOT) not in sys.path:
     sys.path.insert(0, str(ALEPH_ROOT))
@@ -51,7 +61,7 @@ from v4_engine.super_swarm_bft import (
 )
 
 
-class TestUslTelemetryEngine:
+class TestUslTelemetryEngine(unittest.TestCase):
     """Verificación formal de la Ley Universal de Escalabilidad (Gunther USL)."""
 
     def test_gunther_model_equations_and_critical_concurrency(self):
@@ -97,11 +107,11 @@ class TestUslTelemetryEngine:
         engine = UslEngine()
         engine.record_sample(10.0, 9.5)
         engine.record_sample(20.0, 18.2)
-        with _raises(ValueError, match="al menos 3 muestras"):
+        with pytest.raises(ValueError, match="al menos 3 muestras"):
             engine.fit_parameters()
 
 
-class TestVcgAuctionEngine:
+class TestVcgAuctionEngine(unittest.TestCase):
     """Verificación de Subastas Combinatorias VCG y Compatibilidad de Incentivos (DSIC)."""
 
     def test_vcg_single_task_second_price_equivalence(self):
@@ -182,7 +192,7 @@ class TestVcgAuctionEngine:
         assert winners[3] == "agent_2"
 
 
-class TestDynamicGasController:
+class TestDynamicGasController(unittest.TestCase):
     """Verificación de Tarificación Multidimensional EIP-1559 con Quema Deflacionaria."""
 
     def test_gas_price_adjustment_and_elasticity_bound(self):
@@ -220,7 +230,7 @@ class TestDynamicGasController:
         assert controller.total_gas_burned == burned
 
 
-class TestBetaBinomialReputation:
+class TestBetaBinomialReputation(unittest.TestCase):
     """Verificación de Reputación Bayesiana, Aging y Slashing Criptográfico."""
 
     def test_bayesian_reputation_prior_and_updates(self):
@@ -274,7 +284,7 @@ class TestBetaBinomialReputation:
         assert abs(alpha_post - (alpha_pre * 0.90)) < 1e-5
 
 
-class TestNarwhalBullsharkConsensus:
+class TestNarwhalBullsharkConsensus(unittest.TestCase):
     """Verificación del Consenso DAG-BFT Asíncrono de Narwhal-Bullshark."""
 
     def test_quorum_threshold_formal_bounds(self):
@@ -327,11 +337,11 @@ class TestNarwhalBullsharkConsensus:
         corrupted_v = NarwhalVertex(origin=0, round=2, batch_digest="bad", previous_certs=("only_one",))
         corrupted_c = NarwhalCertificate(vertex=corrupted_v, signatures=(0, 1, 2))
 
-        with _raises(ValueError, match="Quórum causal insuficiente"):
+        with pytest.raises(ValueError, match="Quórum causal insuficiente"):
             engine.insert_certificate(corrupted_c)
 
 
-class TestPlumtreeMeshProtocol:
+class TestPlumtreeMeshProtocol(unittest.TestCase):
     """Verificación de Difusión Epidémica Estructurada Plumtree."""
 
     def test_eager_push_and_cycle_pruning(self):
@@ -380,7 +390,7 @@ class TestPlumtreeMeshProtocol:
         assert "D" not in node.lazy_peers
 
 
-class TestSuperSwarmOrchestratorScale:
+class TestSuperSwarmOrchestratorScale(unittest.TestCase):
     """Simulación de Escala y Resiliencia con Super-Enjambre de 1,000 Agentes."""
 
     def test_super_swarm_end_to_end_orchestration(self):
@@ -429,3 +439,7 @@ class TestSuperSwarmOrchestratorScale:
         # 5. Difusión Plumtree
         delivered_count = orchestrator.broadcast_plumtree("agent_0000", b"AST_MUTATION_CRDT_BATCH")
         assert delivered_count > 1
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -18,26 +18,58 @@ import math
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union
 
 # --- Pydantic Dual v1/v2 Compatibility Shim ---
-from pydantic import BaseModel, Field
+from pydantic import BaseModel as _PydanticBaseModel, Field
 try:
     from pydantic import ConfigDict, field_validator, model_validator
+    BaseModel = _PydanticBaseModel
 except ImportError:
     from pydantic import validator, root_validator
+    import json as _shim_json
+
     def field_validator(*fields, **kwargs):
-        return validator(*fields, allow_reuse=True)
+        pre = kwargs.get("mode") == "before"
+        return validator(*fields, pre=pre, allow_reuse=True)
+
     def model_validator(mode="after"):
         def decorator(fn):
             import inspect
             sig = inspect.signature(fn)
             params = list(sig.parameters.keys())
             if params and params[0] == "self":
-                def adapted(cls, values):
-                    return values
-                adapted.__name__ = fn.__name__
-                return root_validator(pre=False, allow_reuse=True)(adapted)
+                fn._is_v2_self_validator = True
+                return fn
             return root_validator(pre=(mode == "before"), allow_reuse=True)(fn)
         return decorator
+
     ConfigDict = lambda **kw: dict(**kw)
+
+    class BaseModel(_PydanticBaseModel):
+        def __init__(self, **data):
+            super().__init__(**data)
+            for attr_name in dir(self.__class__):
+                attr = getattr(self.__class__, attr_name, None)
+                if callable(attr) and getattr(attr, "_is_v2_self_validator", False):
+                    attr(self)
+
+        def model_dump(self, **kwargs):
+            return self.dict(**kwargs)
+
+        def model_dump_json(self, indent=None, **kwargs):
+            return _shim_json.dumps(self.dict(**kwargs), indent=indent, default=str, ensure_ascii=False)
+
+        @classmethod
+        def model_validate(cls, obj, **kwargs):
+            if isinstance(obj, cls):
+                return obj
+            return cls.parse_obj(obj)
+
+        @classmethod
+        def model_validate_json(cls, json_str, **kwargs):
+            return cls.parse_raw(json_str)
+
+        @property
+        def model_fields_set(self):
+            return getattr(self, "__fields_set__", set())
 # ----------------------------------------------
 
 

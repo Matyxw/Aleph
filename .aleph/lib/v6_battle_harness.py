@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Módulo: v6_battle_harness.py
-Ruta: .aleph/lib/v6_battle_harness.py
+Ruta: .aleph\\lib\\v6_battle_harness.py
 Propósito: Battle-Harness para Repositorios Reales Sucios (Superación de Aider y OpenHands).
 
 Integra:

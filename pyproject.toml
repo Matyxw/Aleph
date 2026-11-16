@@ -5,31 +5,28 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "el-aleph-sovereign"
 version = "33.0.0"
-description = "El Aleph v33.0.0 Sovereign Omega Self-Improving Kernel, Bitacora Vault & .aleph World Designer V7"
+description = "El Aleph v33.0.0 Sovereign Omega Self-Improving Kernel, Bitácora Vault & Formal Verification Engine"
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "Proprietary-Sovereign" }
+authors = [
+  { name = "El Aleph Architecture Council" }
+]
 dependencies = [
-    "z3-solver>=4.12.0",
-    "hypothesis>=6.100.0",
-    "pydantic>=2.0.0",
-    "numpy>=1.26.0",
+  "pydantic>=1.10.0",
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.0.0",
-]
+smt = ["z3-solver>=4.12.0"]
+dev = ["pytest>=8.0.0", "selenium>=4.10.0"]
 
 [project.scripts]
 aleph = "aleph_cli:main"
 
 [tool.setuptools.packages.find]
-include = ["aleph", "aleph.*", "aleph_core", "aleph_core.*"]
+where = ["."]
+include = ["aleph_core*", "aleph*", "ab_eval*"]
 
 [tool.pytest.ini_options]
 testpaths = ["aleph_core/tests", ".aleph/tests"]
 python_files = ["test_*.py"]
-addopts = "-q"
-filterwarnings = [
-    "error::SyntaxWarning",
-]

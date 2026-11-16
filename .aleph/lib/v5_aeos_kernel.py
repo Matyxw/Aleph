@@ -3,7 +3,7 @@
 """
 El Aleph v5.0 — Autonomous Epistemic Operating System (AEOS)
 Kernel Maestro Unificado: Enrutador Zero-Token VSA LSH, Protocolo AEP, RAM VFS y Gobernanza Soberana
-Ruta: .aleph/lib/v5_aeos_kernel.py
+Ruta: .aleph\\lib\\v5_aeos_kernel.py
 Especificación: ALEPH-ENG-V5-PLAN-10 / 10_PLAN_SOVEREIGN_ALEPH_ECOSYSTEM_SYNTHESIS.md
 Doctrina: EL DEMIURGO - Síntesis Total de Núcleo Nativo y Ecosistema de Skills
 """
@@ -54,9 +54,9 @@ AEP_MAGIC_LEGACY = b"AEP1"
 AEP_HEADER_SIZE = 32
 DEFAULT_PQC_ROOT_SALT = "ALEPH-PQC-FIPS-203-204-SOVEREIGN-KEY-V5"
 
-# Rutas Canónicas (portables, sin usuario hardcodeado)
+# Rutas Canónicas
 ALEPH_HOME = Path(os.environ.get("ALEPH_HOME", str(Path(__file__).resolve().parent.parent)))
-DEFAULT_SKILLS_DIR = Path(os.environ.get("ALEPH_SKILLS_DIR", str(Path.home() / ".agents" / "skills")))
+DEFAULT_SKILLS_DIR = Path(os.environ.get("ALEPH_SKILLS_DIR", str(Path(__file__).resolve().parent.parent / "skills")))
 V4_ENGINE_DIR = ALEPH_HOME / "v4_engine"
 SCRIPTS_DIR = ALEPH_HOME / "scripts"
 CACHE_DIR = ALEPH_HOME / "cache"

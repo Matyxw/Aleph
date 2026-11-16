@@ -626,10 +626,19 @@ class AlephMCPServer:
                 return {"jsonrpc": "2.0", "id": req_id, "result": {}}
 
             if method == "tools/list":
+                import os as _os
+                profile = str(params.get("profile") or _os.environ.get("ALEPH_MCP_PROFILE", "full")).strip().lower()
+                if profile == "core":
+                    core_tools = [t for t in MCP_TOOLS_SCHEMA if any(k in t.get("name", "") for k in ("audit", "verify", "synthe", "bitacora", "status"))][:9]
+                    if not core_tools:
+                        core_tools = MCP_TOOLS_SCHEMA[:9]
+                    tools_out = core_tools
+                else:
+                    tools_out = MCP_TOOLS_SCHEMA
                 return {
                     "jsonrpc": "2.0",
                     "id": req_id,
-                    "result": {"tools": MCP_TOOLS_SCHEMA},
+                    "result": {"tools": tools_out},
                 }
 
             if method == "tools/call":
