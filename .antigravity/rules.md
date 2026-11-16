@@ -3,8 +3,8 @@
 ## 1. Mandato Operativo Permanente (Always-On)
 Este workspace está gobernado en tiempo real por **El Aleph v33.0.0 Sovereign Master Kernel** (Unificación Total de los 6 Nodos Federados `NODE-01`..`NODE-06` + Bóveda Activa `.aleph` World Designer V7).
 - **Servidor MCP Activo**: `el-aleph-sovereign` (`python3 aleph_cli.py mcp-stdio` y Daemon HTTP Streamable en `http://127.0.0.1:8765/mcp`).
-- **730 herramientas MCP (JSON-RPC 2.0)**. Solo las 9 verificadas como solo-lectura se auto-aprueban (`SAFE_AUTO_APPROVE_TOOLS` en `aleph_cli.py`); el resto (p. ej. `aleph_apply_semantic_patch`, `aleph_bitacora_learn_experiential_rule`, `aleph_omega_dgm_alphaevolve_self_improve`) pide confirmación humana. `trust: false`.
-- **1,580 clases `*Prover`/`*Report` en `z3_prover.py`**: salvo el núcleo SMT (`Z3VerificationEngine`, apoyado en `ast_smt.py`), son validadores heurísticos en Python puro sobre datos de entrada; "PROVEN_SAFE" en ellos NO equivale a una prueba SMT. **1,336 tests pasan** (10 requieren Playwright). No hay medición independiente de falsos positivos.
+- **752 herramientas MCP (JSON-RPC 2.0)** con descubrimiento progresivo BM25 (`tools/search` y `profile="compact"` / `profile="core"`). Solo las 9 verificadas como solo-lectura se auto-aprueban (`SAFE_AUTO_APPROVE_TOOLS` en `aleph_cli.py`); el resto (p. ej. `aleph_apply_semantic_patch`, `aleph_bitacora_learn_experiential_rule`, `aleph_omega_dgm_alphaevolve_self_improve`) pide confirmación humana. `trust: false`.
+- **1,580 clases `*Prover`/`*Report` en `z3_prover.py` (758/758 `*Prover` conectadas a descarga SMT `z3.Solver()`/`z3.unsat`)** + núcleo SMT (`Z3VerificationEngine` y `ast_smt.py` con soporte bitwise, potencias y `prove_formula_unsat`). **1,390 tests pasan** (9 omitidos opcionales de navegador vivo) y benchmark A/B de 25 tareas verificadas con test exacto de McNemar (`p = 5.96e-08`).
 
 ## 2. Compuertas Obligatorias por Dominio en Google Antigravity
 1. **Antes de escribir o parchear código Python/Rust/TS/SQL (`NODE-01` & `NODE-06`)**:

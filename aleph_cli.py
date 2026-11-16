@@ -49,8 +49,10 @@ def cmd_antigravity_always_on(install_user_home: bool = False, start_daemon: boo
         "args": [cli_abs, "mcp-stdio"],
         "env": {
             "PYTHONUNBUFFERED": "1",
+            "PYTHONUTF8": "1",
             "ALEPH_ALWAYS_ON": "1",
             "ALEPH_KERNEL_VERSION": "33.0.0",
+            "ALEPH_MCP_PROFILE": "core",
         },
         "trust": False,
         "alwaysAllow": list(SAFE_AUTO_APPROVE_TOOLS),
@@ -66,6 +68,8 @@ def cmd_antigravity_always_on(install_user_home: bool = False, start_daemon: boo
         home = Path.home()
         user_targets = [
             home / ".gemini" / "settings.json",
+            home / ".gemini" / "config" / "mcp_config.json",
+            home / ".gemini" / "antigravity" / "mcp_config.json",
             home / ".config" / "antigravity" / "mcp_config.json",
         ]
         for ut in user_targets:
@@ -79,6 +83,7 @@ def cmd_antigravity_always_on(install_user_home: bool = False, start_daemon: boo
                         existing = {}
                 if "mcpServers" not in existing or not isinstance(existing["mcpServers"], dict):
                     existing["mcpServers"] = {}
+                existing["mcpServers"].pop("aleph-omega", None)
                 existing["mcpServers"]["el-aleph-sovereign"] = server_entry
                 ut.write_text(json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
                 installed_paths.append(str(ut))

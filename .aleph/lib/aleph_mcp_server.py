@@ -1068,13 +1068,21 @@ class AlephIDEHooksRunner:
 
     def run_hook(self, event_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Dispatches a hook event and returns a structured JSON response for the IDE."""
+        if event_name == "SessionStart":
+            return {"injectSteps": []}
+        if event_name in ("PreInvocation", "PostInvocation"):
+            return {"injectSteps": [], "terminationBehavior": ""}
         if event_name == "UserPromptSubmit":
             return self._on_user_prompt_submit(payload)
         if event_name == "PreToolUse":
             return self._on_pre_tool_use(payload)
         if event_name == "PostToolUse":
+            if isinstance(payload.get("toolCall"), dict):
+                return {}
             return self._on_post_tool_use(payload)
         if event_name == "Stop":
+            if "terminationReason" in payload or "executionNum" in payload:
+                return {"decision": "allow"}
             return self._on_stop(payload)
         return {"continue": True}
 
@@ -1104,31 +1112,41 @@ class AlephIDEHooksRunner:
         }
 
     def _on_pre_tool_use(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        tool_name = payload.get("tool_name") or payload.get("toolName") or ""
-        tool_input = payload.get("tool_input") or payload.get("toolInput") or {}
+        is_agy = isinstance(payload.get("toolCall"), dict)
+        if is_agy:
+            tc = payload["toolCall"]
+            tool_name = tc.get("name") or ""
+            tool_input = tc.get("args") or {}
+        else:
+            tool_name = payload.get("tool_name") or payload.get("toolName") or ""
+            tool_input = payload.get("tool_input") or payload.get("toolInput") or {}
+
+        def _deny(reason_str: str) -> Dict[str, Any]:
+            if is_agy:
+                return {"decision": "deny", "reason": reason_str}
+            return {"continue": False, "decision": "block", "reason": reason_str}
 
         # 1. Guard dangerous shell commands
         cmd = tool_input.get("command") or tool_input.get("CommandLine") or ""
         if cmd:
             for pat in self.DANGEROUS_CMD_PATTERNS:
                 if pat.search(cmd):
-                    return {
-                        "continue": False,
-                        "decision": "block",
-                        "reason": f"[ALEPH-OMEGA v7.0 GUARD] Blocked destructive command pattern: {pat.pattern}",
-                    }
+                    return _deny(f"[EL ALEPH v33.0.0 GUARD] Blocked destructive command pattern: {pat.pattern}")
 
         # 2. Guard Python file writes against placeholders and AST violations
         target_file = (
             tool_input.get("file_path")
             or tool_input.get("TargetFile")
+            or tool_input.get("Path")
             or tool_input.get("path")
             or ""
         )
         code_content = (
             tool_input.get("content")
+            or tool_input.get("Content")
             or tool_input.get("CodeContent")
             or tool_input.get("ReplacementContent")
+            or tool_input.get("Replacement")
             or ""
         )
         target_file_str = str(target_file).replace("\\", "/")
@@ -1143,13 +1161,11 @@ class AlephIDEHooksRunner:
             "language": "python" if target_file_str.endswith(".py") else "",
         })
         if not native_pre.get("allowed", True):
-            return {
-                "continue": False,
-                "decision": "block",
-                "reason": f"[ALEPH-OMEGA v7.0 PRE-TOOL HOOK] Blocked write/command: {'; '.join(native_pre.get('reasons', []))}",
-            }
+            return _deny(
+                f"[EL ALEPH v33.0.0 PRE-TOOL HOOK] Blocked write/command: {'; '.join(native_pre.get('reasons', []))}"
+            )
 
-        if target_file_str.endswith(".py") and code_content and not is_test_file:
+        if target_file_str.endswith(".py") and code_content and not is_test_file and not is_agy:
             audit = self.omega.audit_code(
                 code_content,
                 filename=str(target_file),
@@ -1161,12 +1177,10 @@ class AlephIDEHooksRunner:
                     f"L{v['line']} [{v['rule_id']}]: {v['message']}"
                     for v in audit["violations"][:3]
                 )
-                return {
-                    "continue": False,
-                    "decision": "block",
-                    "reason": f"[ALEPH-OMEGA v7.0 AST & IRON LAWS GUARD] Blocked write to {target_file}: {msgs}",
-                }
+                return _deny(f"[EL ALEPH v33.0.0 AST & IRON LAWS GUARD] Blocked write to {target_file}: {msgs}")
 
+        if is_agy:
+            return {"decision": "allow"}
         return {"continue": True, "decision": "approve"}
 
     def _on_post_tool_use(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1283,7 +1297,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument(
         "--hook",
-        choices=["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"],
+        choices=["SessionStart", "PreInvocation", "PostInvocation", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"],
         help="Run a specific IDE lifecycle hook reading JSON payload from stdin",
     )
     parser.add_argument(
