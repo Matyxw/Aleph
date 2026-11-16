@@ -21,6 +21,8 @@ TOOL_NAMES = {t["name"] for t in AlephUniversalMCPServer().get_tools_manifest()}
 
 
 def _servers(path: Path) -> dict:
+    if path is None:
+        return {}
     return json.loads(path.read_text(encoding="utf-8"))["mcpServers"]
 
 

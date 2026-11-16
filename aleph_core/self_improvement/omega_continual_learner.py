@@ -174,8 +174,10 @@ class MemGPTTieredMemoryPager:
         self.evicted_to_archival_count: int = 0
 
     @staticmethod
-    def _estimate_tokens(text: Optional[str]) -> int:
-        return max(1, len((text or "").split()))
+    def _estimate_tokens(text: str) -> int:
+        if not text:
+            return 1
+        return max(1, len(text) // 4)
 
     def sync_core_memory(self, rules: List[BitacoraRuleRecord]) -> None:
         top_ewc = sorted(rules, key=lambda r: (r.ewc_fisher_importance, r.index), reverse=True)[: self.max_core_rules]
@@ -1272,7 +1274,9 @@ class AlephOmegaContinualSelfImprovementEngine:
             yield
             return
         self.vault_path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path = self.vault_path.parent / ".bitacora_vault.lock"
+        import tempfile as _tf_mod
+        _vh = hashlib.sha256(str(self.vault_path.resolve()).encode("utf-8")).hexdigest()[:16]
+        lock_path = Path(_tf_mod.gettempdir()) / f"aleph_vault_{_vh}.lock"
         fd = _os.open(str(lock_path), _os.O_CREAT | _os.O_RDWR, 0o600)
         acquired = False
         try:

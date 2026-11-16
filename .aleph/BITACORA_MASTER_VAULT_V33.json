@@ -22,14 +22,14 @@
   },
   "shard_counts": {
     "BASE": 51,
+    "MASTER-V32": 1,
+    "MASTER-V33": 1,
     "NODE-01": 122,
     "NODE-02": 3,
     "NODE-03": 6,
     "NODE-04": 1,
     "NODE-05": 52,
-    "NODE-06": 113,
-    "MASTER-V32": 1,
-    "MASTER-V33": 1
+    "NODE-06": 113
   },
   "rules": [
     {

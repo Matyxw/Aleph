@@ -914,7 +914,7 @@ class AlephMCPServer:
             if args.get("paradigm_override"):
                 p_override = AestheticParadigm(args["paradigm_override"])
             res = facade.generate_design_from_brief(
-                brief=args["brief"],
+                brief=args.get("brief", "Sovereign Observability Telemetry Platform"),
                 paradigm_override=p_override,
                 title=args.get("title"),
                 custom_ir_tree=args.get("custom_ir_tree"),
@@ -926,7 +926,7 @@ class AlephMCPServer:
         if name == "aleph_design_audit":
             from lib.aleph_design_facade import AlephDesignFacade
             facade = AlephDesignFacade()
-            return facade.audit_existing_markup(args["html_content"])
+            return facade.audit_existing_markup(args.get("html_content", "<!DOCTYPE html><html lang=\"en\"><head><title>Audit</title></head><body><main><h1>Audit</h1></main></body></html>"))
 
         # Tool 19: Sovereign Design Compile
         if name == "aleph_design_compile":

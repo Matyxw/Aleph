@@ -1,12 +1,12 @@
+"""
+.aleph/tests/test_aleph_visual_stage_synthesizer.py
+Tests exhaustivos para el Motor de Síntesis de Escenografía Visual Interna (Aleph Visual Stage Synthesizer).
+"""
 import unittest
 import os, sys
 dot_lib = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib")
 if dot_lib not in sys.path:
     sys.path.insert(0, dot_lib)
-"""
-.aleph/tests/test_aleph_visual_stage_synthesizer.py
-Tests exhaustivos para el Motor de Síntesis de Escenografía Visual Interna (Aleph Visual Stage Synthesizer).
-"""
 
 
 from aleph_visual_stage_synthesizer import (

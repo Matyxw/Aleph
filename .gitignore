@@ -9,4 +9,6 @@ __pycache__/
 *.sqlite
 *.journal.jsonl
 .aleph/events.jsonl
+.aleph/data/
+.bitacora_vault.lock
 node_modules/

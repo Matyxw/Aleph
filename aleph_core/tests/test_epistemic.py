@@ -41,7 +41,9 @@ class TestEpistemicVerification(unittest.TestCase):
             payload={"x": 0}
         )
         def bad_verifier(p):
-            return 1 // p["x"] == 1
+            if not isinstance(p, dict) or p.get("x", 0) == 0:
+                raise ZeroDivisionError("Simulated division by zero in verifier")
+            return True
         refuted = VerificationGate.verify(claim, bad_verifier)
         self.assertEqual(refuted.status, EpistemicStatus.REFUTED)
         self.assertIn("exception", refuted.proof_output.lower())

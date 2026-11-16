@@ -291,5 +291,80 @@ class TestHostileProductionResilience(unittest.TestCase):
             self.assertEqual(errors, [])
 
 
+
+    def test_stress_09_mcp_730_and_19_tools_deep_audit_regressions(self) -> None:
+        """STRESS-09: Verifica las 8 categorías de regresión descubiertas en la auditoría profunda de las 730+19 herramientas MCP."""
+        from aleph_core.engine import AlephUniversalMCPServer
+        srv = AlephUniversalMCPServer()
+        critical_tools = [
+            "aleph_design_render_oracle_audit",
+            "aleph_visual_stage_synthesizer",
+            "aleph_simulate_spring_physics",
+            "aleph_compile_design_tokens",
+            "aleph_audit_agentic_tool_arguments_and_sandbox_escape",
+            "aleph_audit_pqc_ed25519_dns_rebinding_and_deserialization",
+            "aleph_audit_wasm_memory_prototype_pollution_and_redos",
+            "aleph_audit_jwt_session_and_cookie_security",
+            "aleph_audit_pg18_aio_supavisor_set_local_rls_and_table_rename_compat_view",
+            "aleph_audit_pg18_uuidv7_locality_security_invoker_view_and_matview_refresh_concurrently",
+            "aleph_prove_sundial_logical_lease_caching_and_tapir_inconsistent_replication_fast_quorum_dag",
+            "aleph_prove_janus_dependency_graph_scc_consensus_and_taurus_parallel_logging_lsn_vector_dag",
+            "aleph_prove_polyjuice_learned_policy_matrix_safety_guard_and_meerkat_zero_coordination_fast_quorum_dag",
+            "aleph_prove_forget_it_constant_storage_bft_and_optimistic_information_theoretic_vss",
+            "aleph_prove_disperser_adaptive_byzantine_agreement_and_recursive_asynchronous_dkg",
+            "aleph_prove_subquadratic_byzantine_renaming_and_network_agnostic_multidimensional_approximate_agreement",
+            "aleph_prove_early_stabilizing_byzantine_counting_and_practically_constant_local_skew_gcs",
+            "aleph_prove_small_message_graph_sketch_gossip_and_adversarial_majority_supervised_computing",
+            "aleph_prove_circles_opinion_ranking_and_distributed_szk_sumcheck",
+            "aleph_prove_generalized_mpx_graph_decomposition_matching_and_distributed_stochastic_graph_optimization",
+            "aleph_prove_dynamic_euler_tour_tree_borrows_and_minference",
+            "aleph_prove_block_triangular_scc_ppr_packed_addr_of_and_cake_kv",
+        ]
+        for tname in critical_tools:
+            resp = srv.handle_jsonrpc_request({
+                "jsonrpc": "2.0",
+                "id": 99,
+                "method": "tools/call",
+                "params": {"name": tname, "arguments": {}},
+            })
+            self.assertNotIn("error", resp, f"Tool {tname} failed: {resp}")
+            self.assertFalse(resp["result"].get("isError", False))
+
+        # Check .aleph/lib/aleph_mcp_server.py empty-args resilience
+        dot_aleph_lib = str(Path(__file__).resolve().parents[2] / ".aleph" / "lib")
+        if dot_aleph_lib not in sys.path:
+            sys.path.insert(0, dot_aleph_lib)
+        import aleph_mcp_server as lib_mcp
+        lib_srv = lib_mcp.AlephMCPServer()
+        for lib_tool in ("aleph_design_create", "aleph_design_audit"):
+            lresp = lib_srv.handle_request({
+                "jsonrpc": "2.0",
+                "id": 100,
+                "method": "tools/call",
+                "params": {"name": lib_tool, "arguments": {}},
+            })
+            self.assertNotIn("error", lresp)
+            self.assertFalse(lresp["result"].get("isError", False), f"Lib tool {lib_tool} failed: {lresp}")
+
+    def test_stress_10_git_sovereign_gate_and_docstrings_integrity(self) -> None:
+        """STRESS-10: Verifica ProofStatus.PBT_VERIFIED en GitSovereignGate y preservación de docstrings de módulo."""
+        from aleph_core.verification.z3_prover import ProofStatus, GitSovereignGate
+        import aleph_cli
+        import aleph_core.engine as eng_mod
+        import aleph_core.verification.z3_prover as z3_mod
+
+        self.assertEqual(ProofStatus.PBT_VERIFIED.value, "PBT_VERIFIED")
+        self.assertIsNotNone(aleph_cli.__doc__)
+        self.assertIsNotNone(eng_mod.__doc__)
+        self.assertIsNotNone(z3_mod.__doc__)
+
+        rep = GitSovereignGate.audit_files_dict({
+            "sample.py": "def safe_inc(x: int) -> int:\n    if x < 100:\n        return x + 1\n    return 0\n"
+        })
+        self.assertTrue(rep.safe_to_commit)
+        self.assertEqual(rep.blocking_defects, [])
+        self.assertGreaterEqual(rep.formal_proofs_passed, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
