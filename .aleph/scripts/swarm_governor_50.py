@@ -17,6 +17,7 @@ Componentes Nucleares:
 
 from __future__ import annotations
 
+import ast
 import collections
 from collections import defaultdict, deque
 import dataclasses
@@ -397,6 +398,210 @@ class PatchEnvelope:
     created_at: float = field(default_factory=time.time)
 
 
+class SterileVerificationRunner:
+    """
+    Runner Estéril de Verificación en RAM:
+    Ejecuta `ast.parse` + compilación a bytecode (`compile(..., mode="exec")`)
+    + inspección de seguridad AST (eval, exec, os.system, subprocess shell=True,
+    bare except: pass, y bucles `while True:` sin ruta de salida) en sub-milisegundo.
+    """
+
+    _SUBPROCESS_FUNCS = frozenset(
+        {"run", "Popen", "call", "check_call", "check_output", "getoutput", "getstatusoutput"}
+    )
+    _CODE_PUNCT_RE = re.compile(r"[=():\[\]{}.;#@'\"+\-*/<>!%,\\\n]")
+    _LEADING_PY_KW_RE = re.compile(
+        r"^(?:def|class|import|from|return|while|for|if|elif|else|try|except|"
+        r"finally|with|raise|assert|async|await|yield|del|global|nonlocal)\b"
+    )
+
+    @classmethod
+    def _is_truthy_constant(cls, node: ast.AST) -> bool:
+        if isinstance(node, ast.Constant):
+            return bool(node.value)
+        if (
+            isinstance(node, ast.UnaryOp)
+            and isinstance(node.op, ast.Not)
+            and isinstance(node.operand, ast.Constant)
+        ):
+            return not bool(node.operand.value)
+        return False
+
+    @classmethod
+    def _has_loop_exit(cls, stmts: Sequence[ast.stmt], allow_break: bool = True) -> bool:
+        for stmt in stmts:
+            if isinstance(stmt, (ast.Return, ast.Raise)):
+                return True
+            if allow_break and isinstance(stmt, ast.Break):
+                return True
+            if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+                fn = stmt.value.func
+                if isinstance(fn, ast.Name) and fn.id in {"exit", "quit"}:
+                    return True
+                if (
+                    isinstance(fn, ast.Attribute)
+                    and isinstance(fn.value, ast.Name)
+                    and fn.value.id in {"sys", "os"}
+                    and fn.attr in {"exit", "_exit"}
+                ):
+                    return True
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(stmt, (ast.For, ast.AsyncFor, ast.While)):
+                if cls._has_loop_exit(stmt.body, allow_break=False):
+                    return True
+                if cls._has_loop_exit(stmt.orelse, allow_break=allow_break):
+                    return True
+            elif isinstance(stmt, ast.If):
+                if cls._has_loop_exit(stmt.body, allow_break=allow_break) or cls._has_loop_exit(
+                    stmt.orelse, allow_break=allow_break
+                ):
+                    return True
+            elif isinstance(stmt, (ast.With, ast.AsyncWith)):
+                if cls._has_loop_exit(stmt.body, allow_break=allow_break):
+                    return True
+            elif isinstance(stmt, ast.Try) or (
+                hasattr(ast, "TryStar") and isinstance(stmt, ast.TryStar)
+            ):
+                for branch in (stmt.body, stmt.orelse, stmt.finalbody):
+                    if cls._has_loop_exit(branch, allow_break=allow_break):
+                        return True
+                for handler in stmt.handlers:
+                    if cls._has_loop_exit(handler.body, allow_break=allow_break):
+                        return True
+            elif hasattr(ast, "Match") and isinstance(stmt, ast.Match):
+                for case in stmt.cases:
+                    if cls._has_loop_exit(case.body, allow_break=allow_break):
+                        return True
+        return False
+
+    @classmethod
+    def _inspect_ast_safety(cls, tree: ast.AST) -> Optional[str]:
+        os_aliases: Set[str] = {"os"}
+        sp_aliases: Set[str] = {"subprocess"}
+        builtins_aliases: Set[str] = {"builtins"}
+        direct_os_system: Set[str] = set()
+        direct_sp_funcs: Set[str] = set()
+        direct_eval_exec: Dict[str, str] = {"eval": "eval", "exec": "exec"}
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    local_name = alias.asname or alias.name.split(".")[0]
+                    if alias.name == "os":
+                        os_aliases.add(local_name)
+                    elif alias.name == "subprocess":
+                        sp_aliases.add(local_name)
+                    elif alias.name == "builtins":
+                        builtins_aliases.add(local_name)
+            elif isinstance(node, ast.ImportFrom):
+                mod = node.module or ""
+                for alias in node.names:
+                    local_name = alias.asname or alias.name
+                    if mod == "os" and alias.name in {"system", "popen"}:
+                        direct_os_system.add(local_name)
+                    elif mod == "subprocess" and alias.name in cls._SUBPROCESS_FUNCS:
+                        direct_sp_funcs.add(local_name)
+                    elif mod == "builtins" and alias.name in {"eval", "exec"}:
+                        direct_eval_exec[local_name] = alias.name
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                fn = node.func
+                if isinstance(fn, ast.Name):
+                    if fn.id in direct_eval_exec:
+                        return f"REJECT_SECURITY_VIOLATION: {direct_eval_exec[fn.id]}"
+                    if fn.id in direct_os_system:
+                        return "REJECT_SECURITY_VIOLATION: os.system"
+                    if fn.id in direct_sp_funcs and any(
+                        kw.arg == "shell" and cls._is_truthy_constant(kw.value)
+                        for kw in node.keywords
+                    ):
+                        return "REJECT_SECURITY_VIOLATION: subprocess_shell_true"
+                elif isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name):
+                    mod_id = fn.value.id
+                    if mod_id in builtins_aliases and fn.attr in {"eval", "exec"}:
+                        return f"REJECT_SECURITY_VIOLATION: {fn.attr}"
+                    if mod_id in os_aliases and fn.attr in {"system", "popen"}:
+                        return "REJECT_SECURITY_VIOLATION: os.system"
+                    if mod_id in sp_aliases and any(
+                        kw.arg == "shell" and cls._is_truthy_constant(kw.value)
+                        for kw in node.keywords
+                    ):
+                        return "REJECT_SECURITY_VIOLATION: subprocess_shell_true"
+            elif isinstance(node, ast.ExceptHandler):
+                if node.type is None and any(isinstance(s, ast.Pass) for s in node.body):
+                    return "REJECT_UNSAFE_AST: bare_except_pass"
+            elif isinstance(node, ast.While):
+                if cls._is_truthy_constant(node.test) and not cls._has_loop_exit(
+                    node.body, allow_break=True
+                ):
+                    return "REJECT_UNSAFE_AST: infinite_while_true"
+
+        return None
+
+    def verify_code(self, source_code: str, filename: str = "<sterile_patch>") -> Tuple[bool, str]:
+        """Analiza, compila a bytecode y audita AST en memoria sin ejecutar el código."""
+        try:
+            tree = ast.parse(source_code, filename=filename)
+            compile(tree, filename, mode="exec")
+        except (SyntaxError, ValueError):
+            return False, "REJECT_SYNTAX_ERROR"
+
+        unsafe_reason = self._inspect_ast_safety(tree)
+        if unsafe_reason is not None:
+            return False, unsafe_reason
+
+        return True, "VERIFIED_CLEAN"
+
+    @classmethod
+    def _extract_candidate_python(cls, text: str) -> Optional[str]:
+        stripped = text.strip()
+        if not stripped or stripped.lstrip().startswith("//"):
+            return None
+
+        lines = text.splitlines()
+        if any(ln.startswith(("+++ ", "--- ", "@@ ", "diff --git ")) for ln in lines):
+            added = [
+                ln[1:]
+                for ln in lines
+                if ln.startswith("+") and not ln.startswith("+++ ")
+            ]
+            joined = "\n".join(added)
+            return joined if joined.strip() else None
+
+        if cls._CODE_PUNCT_RE.search(stripped) or cls._LEADING_PY_KW_RE.match(stripped):
+            return text
+        return None
+
+    def verify_patch(self, patch: PatchEnvelope) -> Tuple[bool, str]:
+        """Ejecuta verificación estéril completa sobre un PatchEnvelope."""
+        if "SYNTAX_ERROR" in patch.code_diff:
+            return False, "REJECT_SYNTAX_ERROR"
+        if "TYPE_MISMATCH" in patch.code_diff:
+            return False, "REJECT_TYPE_MISMATCH"
+        if "FAIL_TEST" in patch.code_diff:
+            return False, "REJECT_SMOKE_TEST_FAILURE"
+
+        if isinstance(patch.ast_mutation, dict):
+            mut_content = patch.ast_mutation.get("content")
+            if isinstance(mut_content, str):
+                cand_mut = self._extract_candidate_python(mut_content)
+                if cand_mut is not None:
+                    ok, verdict = self.verify_code(cand_mut, filename=f"<{patch.patch_id}:ast>")
+                    if not ok:
+                        return False, verdict
+
+        if isinstance(patch.code_diff, str):
+            cand_diff = self._extract_candidate_python(patch.code_diff)
+            if cand_diff is not None:
+                ok, verdict = self.verify_code(cand_diff, filename=f"<{patch.patch_id}:diff>")
+                if not ok:
+                    return False, verdict
+
+        return True, "VERIFIED_CLEAN"
+
+
 class SpeculativeMergePipeline:
     """
     Speculative Merge Pipeline (SMP):
@@ -409,6 +614,7 @@ class SpeculativeMergePipeline:
         self.queue: deque[PatchEnvelope] = deque()
         self.committed_patches: List[PatchEnvelope] = []
         self.rejected_patches: List[Tuple[PatchEnvelope, str]] = []
+        self.sterile_runner = SterileVerificationRunner()
         self._lock = threading.Lock()
 
     def submit_patch(self, patch: PatchEnvelope) -> None:
@@ -418,7 +624,7 @@ class SpeculativeMergePipeline:
     def process_next_patch(self) -> Optional[Tuple[bool, str, float]]:
         """
         Ejecuta el pipeline de validación de 3 fases en runner estéril:
-          1. Parse & Linter (< 15 ms).
+          1. Parse AST, compilación a bytecode, inspección de seguridad AST & Linter (< 15 ms).
           2. Typecheck incremental (< 120 ms).
           3. Targeted Smoke Test (< 350 ms).
         """
@@ -429,23 +635,12 @@ class SpeculativeMergePipeline:
 
         t0 = time.perf_counter()
 
-        # Fase 1: Parse AST & Linter
-        if "SYNTAX_ERROR" in patch.code_diff:
+        ok_sterile, verdict = self.sterile_runner.verify_patch(patch)
+        if not ok_sterile:
             latency_ms = (time.perf_counter() - t0) * 1000.0
-            self.rejected_patches.append((patch, "REJECT_SYNTAX_ERROR"))
-            return False, "REJECT_SYNTAX_ERROR", latency_ms
-
-        # Fase 2: Typecheck
-        if "TYPE_MISMATCH" in patch.code_diff:
-            latency_ms = (time.perf_counter() - t0) * 1000.0
-            self.rejected_patches.append((patch, "REJECT_TYPE_MISMATCH"))
-            return False, "REJECT_TYPE_MISMATCH", latency_ms
-
-        # Fase 3: Smoke Test
-        if "FAIL_TEST" in patch.code_diff:
-            latency_ms = (time.perf_counter() - t0) * 1000.0
-            self.rejected_patches.append((patch, "REJECT_SMOKE_TEST_FAILURE"))
-            return False, "REJECT_SMOKE_TEST_FAILURE", latency_ms
+            with self._lock:
+                self.rejected_patches.append((patch, verdict))
+            return False, verdict, latency_ms
 
         # Aprobación: Aplicación atómica al AST-CRDT de main
         if "symbol" in patch.ast_mutation and "content" in patch.ast_mutation:

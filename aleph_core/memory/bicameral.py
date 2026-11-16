@@ -209,29 +209,100 @@ AlgorithmicRule(
             conn.commit()
 
     def search_knowledge_graph(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """Recuperación híbrida BM25 + expansión de 1 salto en el grafo de conocimiento."""
-        q_tokens = set(re.findall(r"\w{3,}", query.lower()))
+        """Recuperación híbrida Okapi BM25 con pesos IDF + propagación de 1 salto en el grafo de conocimiento."""
+        q_terms = re.findall(r"\w{3,}", query.lower())
+        q_unique = list(dict.fromkeys(q_terms))
         with self.store._connection() as conn:
             rows = conn.execute("SELECT * FROM kg_nodes").fetchall()
-            scored = []
-            for r in rows:
-                text = f"{r['title']} {r['content']} {r['tags_json']}".lower()
-                doc_tokens = set(re.findall(r"\w{3,}", text))
-                overlap = len(q_tokens & doc_tokens)
-                if overlap > 0 or not q_tokens:
-                    score = overlap / math.sqrt(max(len(doc_tokens), 1))
-                    edges = conn.execute(
-                        "SELECT target_id, relation, weight FROM kg_edges WHERE source_id = ?",
-                        (r["node_id"],)
-                    ).fetchall()
-                    scored.append({
-                        "node_id": r["node_id"],
-                        "node_type": r["node_type"],
-                        "title": r["title"],
-                        "content": r["content"],
-                        "tags": json.loads(r["tags_json"]),
-                        "score": round(score, 4),
-                        "links": [{"target": e["target_id"], "relation": e["relation"], "weight": e["weight"]} for e in edges]
-                    })
-            scored.sort(key=lambda x: x["score"], reverse=True)
-            return scored[:top_k]
+            if not rows:
+                return []
+            all_edges = conn.execute(
+                "SELECT source_id, target_id, relation, weight FROM kg_edges"
+            ).fetchall()
+
+        out_edges: Dict[str, List[Dict[str, Any]]] = {}
+        adj_neighbors: Dict[str, List[Tuple[str, float]]] = {}
+        for e in all_edges:
+            src = e["source_id"]
+            tgt = e["target_id"]
+            w = max(0.0, float(e["weight"]))
+            out_edges.setdefault(src, []).append({
+                "target": tgt,
+                "relation": e["relation"],
+                "weight": float(e["weight"]),
+            })
+            adj_neighbors.setdefault(src, []).append((tgt, w))
+            adj_neighbors.setdefault(tgt, []).append((src, w))
+
+        n_docs = len(rows)
+        doc_tfs: Dict[str, Dict[str, int]] = {}
+        doc_lens: Dict[str, int] = {}
+        doc_freqs: Dict[str, int] = {}
+        node_by_id: Dict[str, Any] = {}
+
+        for r in rows:
+            nid = r["node_id"]
+            node_by_id[nid] = r
+            text = f"{r['title']} {r['content']} {r['tags_json']}".lower()
+            toks = re.findall(r"\w{3,}", text)
+            tfs: Dict[str, int] = {}
+            for tok in toks:
+                tfs[tok] = tfs.get(tok, 0) + 1
+            doc_tfs[nid] = tfs
+            doc_lens[nid] = max(1, len(toks))
+            for tok in tfs:
+                doc_freqs[tok] = doc_freqs.get(tok, 0) + 1
+
+        avg_dl = sum(doc_lens.values()) / max(1, n_docs)
+        k1 = 1.5
+        b = 0.75
+
+        bm25_scores: Dict[str, float] = {}
+        if not q_unique:
+            for nid in node_by_id:
+                bm25_scores[nid] = 1.0
+        else:
+            idfs = {
+                qt: math.log(1.0 + (n_docs - doc_freqs.get(qt, 0) + 0.5) / (doc_freqs.get(qt, 0) + 0.5))
+                for qt in q_unique
+            }
+            for nid in node_by_id:
+                tfs = doc_tfs[nid]
+                dl = doc_lens[nid]
+                k1_norm = k1 * (1.0 - b + b * (dl / avg_dl))
+                s = 0.0
+                for qt in q_unique:
+                    tf = tfs.get(qt, 0)
+                    if tf > 0:
+                        s += idfs[qt] * ((tf * (k1 + 1.0)) / (tf + k1_norm))
+                bm25_scores[nid] = s
+
+        # Propagación de puntuación a vecinos de 1 salto ponderada por peso normalizado de arista
+        hop_boost: Dict[str, float] = {nid: 0.0 for nid in node_by_id}
+        if q_unique:
+            for src_id, base_score in bm25_scores.items():
+                if base_score <= 0.0:
+                    continue
+                nbrs = adj_neighbors.get(src_id, ())
+                if not nbrs:
+                    continue
+                total_w = sum(w for _, w in nbrs) or 1.0
+                for nbr_id, w in nbrs:
+                    if nbr_id in hop_boost:
+                        hop_boost[nbr_id] += 0.35 * base_score * (w / total_w)
+
+        scored: List[Dict[str, Any]] = []
+        for nid, r in node_by_id.items():
+            final_score = bm25_scores[nid] + hop_boost[nid]
+            if final_score > 0.0 or not q_unique:
+                scored.append({
+                    "node_id": nid,
+                    "node_type": r["node_type"],
+                    "title": r["title"],
+                    "content": r["content"],
+                    "tags": json.loads(r["tags_json"]),
+                    "score": round(final_score, 4),
+                    "links": out_edges.get(nid, []),
+                })
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return scored[: max(1, top_k)]

@@ -5,6 +5,7 @@ Extractor de contratos Hoare/Dafny desde AST (decoradores y docstrings) y constr
 Soporta intrínsecos matemáticos (len, abs, min, max, int, bool), expresiones ternarias (IfExp) y cadenas relacionales.
 """
 import ast
+import threading
 from typing import Dict, List, Tuple, Any, Optional, Callable
 
 try:
@@ -13,6 +14,36 @@ try:
 except ImportError:
     z3 = None
     HAS_Z3 = False
+
+_THREAD_LOCAL_SOLVER = threading.local()
+
+
+def prove_formula_unsat(formula: Any, timeout_ms: int = 200) -> Optional[bool]:
+    """
+    Verifica si una fórmula Z3 es insatisfactible (UNSAT) usando un z3.Solver()
+    thread-local con push()/pop() y timeout acotado.
+    Retorna True si UNSAT, False si SAT, o None si UNKNOWN o z3-solver no está disponible.
+    """
+    if not HAS_Z3 or z3 is None:
+        return None
+    if isinstance(formula, bool):
+        formula = z3.BoolVal(formula)
+    solver = getattr(_THREAD_LOCAL_SOLVER, "solver", None)
+    if solver is None:
+        solver = z3.Solver()
+        _THREAD_LOCAL_SOLVER.solver = solver
+    solver.set("timeout", max(1, int(timeout_ms)))
+    solver.push()
+    try:
+        solver.add(formula)
+        res = solver.check()
+        if res == z3.unsat:
+            return True
+        if res == z3.sat:
+            return False
+        return None
+    finally:
+        solver.pop()
 
 class ASTContractExtractor:
     """Extrae precondiciones, poscondiciones e invariantes desde AST (decoradores y docstrings)."""
@@ -110,16 +141,39 @@ class SMTExpressionBuilder:
                 return ("NEG", op_val)
             elif isinstance(node.op, ast.UAdd):
                 return op_val
+            elif isinstance(node.op, ast.Invert):
+                return ("BITNOT", op_val)
         elif isinstance(node, ast.BinOp):
             left = self._compile_symbolic(node.left)
             right = self._compile_symbolic(node.right)
+            if isinstance(node.op, ast.Pow):
+                if (
+                    isinstance(node.right, ast.Constant)
+                    and isinstance(node.right.value, int)
+                    and not isinstance(node.right.value, bool)
+                    and 0 <= node.right.value <= 8
+                ):
+                    exp = node.right.value
+                    if exp == 0:
+                        return ("CONST", 1)
+                    if exp == 1:
+                        return left
+                    acc = left
+                    for _ in range(exp - 1):
+                        acc = ("BINOP", "*", acc, left)
+                    return acc
             op_map = {
                 ast.Add: "+",
                 ast.Sub: "-",
                 ast.Mult: "*",
                 ast.Div: "//",
                 ast.FloorDiv: "//",
-                ast.Mod: "%"
+                ast.Mod: "%",
+                ast.BitAnd: "&",
+                ast.BitOr: "|",
+                ast.BitXor: "^",
+                ast.LShift: "<<",
+                ast.RShift: ">>",
             }
             for k, sym in op_map.items():
                 if isinstance(node.op, k):
@@ -205,6 +259,20 @@ class SMTExpressionBuilder:
             return self.get_var(attr_full)
         raise NotImplementedError(f"Nodo AST no soportado: {ast.dump(node)}")
 
+    def _coerce_z3_int(self, expr: Any) -> Any:
+        if isinstance(expr, z3.BoolRef):
+            return z3.If(expr, z3.IntVal(1), z3.IntVal(0))
+        if isinstance(expr, z3.BitVecRef):
+            return z3.BV2Int(expr, is_signed=True)
+        return expr
+
+    def _coerce_z3_bv(self, expr: Any) -> Any:
+        if isinstance(expr, z3.BoolRef):
+            return z3.If(expr, z3.BitVecVal(1, self.bv_bits), z3.BitVecVal(0, self.bv_bits))
+        if isinstance(expr, z3.ArithRef):
+            return z3.Int2BV(expr, self.bv_bits)
+        return expr
+
     def _compile_z3(self, node: ast.AST) -> Any:
         if isinstance(node, ast.Constant):
             if isinstance(node.value, bool):
@@ -224,6 +292,11 @@ class SMTExpressionBuilder:
                 return -operand
             elif isinstance(node.op, ast.UAdd):
                 return operand
+            elif isinstance(node.op, ast.Invert):
+                if self.use_bitvectors:
+                    return ~self._coerce_z3_bv(operand)
+                op_int = self._coerce_z3_int(operand)
+                return -(op_int + z3.IntVal(1))
         elif isinstance(node, ast.BinOp):
             left = self._compile_z3(node.left)
             right = self._compile_z3(node.right)
@@ -237,6 +310,51 @@ class SMTExpressionBuilder:
                 return left / right
             elif isinstance(node.op, ast.Mod):
                 return z3.SMod(left, right) if self.use_bitvectors else (left % right)
+            elif isinstance(node.op, (ast.BitAnd, ast.BitOr, ast.BitXor, ast.LShift, ast.RShift)):
+                if self.use_bitvectors:
+                    lb = self._coerce_z3_bv(left)
+                    rb = self._coerce_z3_bv(right)
+                    if isinstance(node.op, ast.BitAnd):
+                        return lb & rb
+                    elif isinstance(node.op, ast.BitOr):
+                        return lb | rb
+                    elif isinstance(node.op, ast.BitXor):
+                        return lb ^ rb
+                    elif isinstance(node.op, ast.LShift):
+                        return lb << rb
+                    else:
+                        return lb >> rb
+                else:
+                    lb = z3.Int2BV(self._coerce_z3_int(left), 64)
+                    rb = z3.Int2BV(self._coerce_z3_int(right), 64)
+                    if isinstance(node.op, ast.BitAnd):
+                        bv_res = lb & rb
+                    elif isinstance(node.op, ast.BitOr):
+                        bv_res = lb | rb
+                    elif isinstance(node.op, ast.BitXor):
+                        bv_res = lb ^ rb
+                    elif isinstance(node.op, ast.LShift):
+                        bv_res = lb << rb
+                    else:
+                        bv_res = lb >> rb
+                    return z3.BV2Int(bv_res, is_signed=True)
+            elif isinstance(node.op, ast.Pow):
+                if (
+                    isinstance(node.right, ast.Constant)
+                    and isinstance(node.right.value, int)
+                    and not isinstance(node.right.value, bool)
+                    and 0 <= node.right.value <= 8
+                ):
+                    exp = node.right.value
+                    if exp == 0:
+                        return z3.BitVecVal(1, self.bv_bits) if self.use_bitvectors else z3.IntVal(1)
+                    base_val = self._coerce_z3_bv(left) if self.use_bitvectors else self._coerce_z3_int(left)
+                    if exp == 1:
+                        return base_val
+                    acc = base_val
+                    for _ in range(exp - 1):
+                        acc = acc * base_val
+                    return acc
         elif isinstance(node, ast.BoolOp):
             values = [self._compile_z3(v) for v in node.values]
             return z3.And(*values) if isinstance(node.op, ast.And) else z3.Or(*values)

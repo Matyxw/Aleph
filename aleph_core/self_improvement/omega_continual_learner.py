@@ -13,6 +13,7 @@ Implementación SOTA de los 8 Pilares del Motor de Automejora Continua Sin Olvid
 from __future__ import annotations
 
 import ast
+import copy
 import csv
 from dataclasses import dataclass, field, asdict
 import hashlib
@@ -21,8 +22,23 @@ import math
 import operator
 from pathlib import Path
 import re
+import threading
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple
+import unicodedata
+
+
+_VAULT_INDEX_CACHE_LOCK = threading.RLock()
+_VAULT_INDEX_CACHE: Dict[Tuple[str, int, int], Dict[str, Any]] = {}
+_VAULT_RESOLVED_PATH_CACHE: Dict[str, str] = {}
+_DEFAULT_KERNEL_BASE_DIR = Path(__file__).resolve().parent.parent.parent
+_MAX_VAULT_INDEX_CACHE_ENTRIES = 32
+
+
+def _fold_accents_lower(text: str) -> str:
+    """Normaliza NFKD eliminando marcas diacríticas para emparejamiento bilingüe ES/EN robusto."""
+    nfkd = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in nfkd if unicodedata.category(ch) != "Mn").lower()
 
 
 @dataclass
@@ -106,27 +122,63 @@ class TitansAssociativeMemoryMatrix:
     def __init__(self, eta: float = 0.80, theta: float = 0.25):
         self.eta = eta
         self.theta = theta
-        self.weights: List[List[float]] = [
-            [0.05 if i == j else 0.0 for j in range(self.DIM)]
-            for i in range(self.DIM)
-        ]
-        self.momentum_matrix: List[List[float]] = [
-            [0.0 for _ in range(self.DIM)]
-            for _ in range(self.DIM)
-        ]
+        dim = self.DIM
+        self.weights: List[List[float]] = [[0.0] * dim for _ in range(dim)]
+        for i in range(dim):
+            self.weights[i][i] = 0.05
+        self.momentum_matrix: List[List[float]] = [[0.0] * dim for _ in range(dim)]
         self.gate_w: List[float] = [
-            ((-1.0) ** i) * 0.15 for i in range(self.DIM)
+            ((-1.0) ** i) * 0.15 for i in range(dim)
         ]
         self.scalar_momentum: float = 0.85
 
     @classmethod
     def project_kv(cls, text: str) -> Tuple[List[float], List[float]]:
-        digest = hashlib.shake_256(text.encode("utf-8")).digest(cls.DIM * 4)
-        k_vec = [((digest[i] / 127.5) - 1.0) for i in range(cls.DIM)]
-        v_vec = [((digest[cls.DIM + i] / 127.5) - 1.0) for i in range(cls.DIM)]
-        k_norm = math.sqrt(sum(x * x for x in k_vec)) or 1.0
-        v_norm = math.sqrt(sum(x * x for x in v_vec)) or 1.0
-        return ([x / k_norm for x in k_vec], [x / v_norm for x in v_vec])
+        """
+        Proyección SimHash / Signed Random Projection sensible a localidad sobre tokens normalizados
+        y trigramas de caracteres (blake2s en R^{16} para k_vec y v_vec, normalizado L2).
+        Preserva alta similitud coseno (> 0.85) ante cambios menores de puntuación o edición.
+        """
+        if not text or not text.strip():
+            return ([0.0] * cls.DIM, [0.0] * cls.DIM)
+
+        folded = _fold_accents_lower(text)
+        tokens = re.findall(r"[a-z0-9_]+", folded)
+        features: List[Tuple[str, float]] = []
+
+        if tokens:
+            for tok in tokens:
+                features.append((f"t:{tok}", 1.5))
+            norm_str = " ".join(tokens)
+            if len(norm_str) >= 3:
+                for i in range(len(norm_str) - 2):
+                    features.append((f"g:{norm_str[i : i + 3]}", 1.0))
+            else:
+                features.append((f"g:{norm_str}", 1.0))
+        else:
+            norm_str = re.sub(r"\s+", " ", folded.strip())
+            if len(norm_str) >= 3:
+                for i in range(len(norm_str) - 2):
+                    features.append((f"g:{norm_str[i : i + 3]}", 1.0))
+            else:
+                features.append((f"g:{norm_str}", 1.0))
+
+        k_vec = [0.0] * cls.DIM
+        v_vec = [0.0] * cls.DIM
+        for feat, weight in features:
+            digest = hashlib.blake2s(feat.encode("utf-8"), digest_size=4).digest()
+            k_bits = int.from_bytes(digest[:2], "little")
+            v_bits = int.from_bytes(digest[2:4], "little")
+            for i in range(cls.DIM):
+                k_vec[i] += weight if ((k_bits >> i) & 1) else -weight
+                v_vec[i] += weight if ((v_bits >> i) & 1) else -weight
+
+        k_norm = math.sqrt(sum(x * x for x in k_vec))
+        v_norm = math.sqrt(sum(x * x for x in v_vec))
+        fallback = 1.0 / math.sqrt(cls.DIM)
+        k_out = [x / k_norm for x in k_vec] if k_norm > 0.0 else [fallback] * cls.DIM
+        v_out = [x / v_norm for x in v_vec] if v_norm > 0.0 else [fallback] * cls.DIM
+        return (k_out, v_out)
 
     def step(self, text: str, corpus_bits_norm: float) -> Tuple[float, float]:
         if not text.strip():
@@ -393,7 +445,7 @@ class AlephOmegaContinualSelfImprovementEngine:
     """
 
     DEFAULT_VAULT_REL_PATH = Path(".aleph/BITACORA_MASTER_VAULT_V33.json")
-    EMBED_DIM = 64
+    EMBED_DIM = 256
 
     STOP_WORDS = {
         "para", "como", "este", "esta", "estos", "estas", "todo", "toda", "todos", "todas",
@@ -403,9 +455,96 @@ class AlephOmegaContinualSelfImprovementEngine:
         "and", "the", "for", "with", "from", "into", "that", "this", "are", "was", "were",
     }
 
+    _BILINGUAL_SYNONYM_CLUSTERS: Dict[str, Tuple[str, ...]] = {
+        "auth": ("autenticacion", "auth", "login", "jwt", "sesion", "session", "oauth", "oidc", "token", "credencial", "credential", "password", "contrasena", "pkce", "dpop", "sso", "mfa"),
+        "database": ("basededatos", "db", "sql", "postgres", "postgresql", "sqlite", "query", "consulta", "tabla", "table", "schema", "esquema", "supabase", "rls", "indice", "index"),
+        "memory": ("memoria", "memory", "cache", "ram", "mmap", "buffer", "heap", "stack", "kvcache", "kv", "paginacion", "paging", "leak", "fuga"),
+        "error": ("error", "bug", "fallo", "falla", "excepcion", "exception", "defect", "defecto", "crash", "colapso", "panic", "panico", "fault", "friccion"),
+        "ui_frontend": ("interfaz", "ui", "css", "html", "dom", "wcag", "frontend", "accesibilidad", "accessibility", "layout", "diseno", "design", "render", "renderizado", "subgrid", "viewport"),
+        "concurrency": ("concurrencia", "concurrency", "async", "asincrono", "thread", "hilo", "lock", "bloqueo", "mutex", "deadlock", "interbloqueo", "race", "carrera", "raft", "bft", "consenso", "consensus", "quorum"),
+        "security": ("seguridad", "security", "injection", "inyeccion", "ssrf", "xss", "csrf", "ssti", "sqli", "taint", "contaminacion", "vulnerabilidad", "vulnerability", "exploit", "sanitizar", "sanitize", "csp"),
+        "verification": ("verificacion", "verification", "smt", "z3", "formal", "proof", "prueba", "invariant", "invariante", "contract", "contrato", "requires", "ensures", "cegis", "theorem", "teorema"),
+        "testing": ("test", "tests", "testing", "unittest", "pytest", "benchmark", "eval", "evaluacion", "assertion", "asercion", "property", "fuzzing", "mutation", "mutacion"),
+        "graph_retrieval": ("grafo", "graph", "pagerank", "ppr", "hipporag", "bm25", "retrieval", "recuperacion", "search", "busqueda", "embedding", "vector", "simhash", "lsh", "ranking"),
+        "continual_learning": ("aprendizaje", "learning", "continual", "continuo", "forgetting", "olvido", "ewc", "fisher", "titans", "surprise", "sorpresa", "merkle", "boveda", "vault"),
+        "ast_compiler": ("ast", "sintaxis", "syntax", "parser", "parseo", "compiler", "compilador", "bytecode", "ssa", "cfg", "dataflow", "flujo", "static", "estatico"),
+        "cryptography": ("criptografia", "crypto", "sha256", "hash", "firma", "signature", "ed25519", "rsa", "aes", "gcm", "aead", "kyber", "mlkem", "dilithium", "mldsa", "pqc", "postcuantico", "hmac"),
+        "networking": ("red", "network", "http", "https", "tls", "ssl", "dns", "socket", "tcp", "udp", "grpc", "http2", "proxy", "timeout", "latencia", "latency"),
+        "transactions": ("transaccion", "transaction", "acid", "mvcc", "serializability", "serializabilidad", "isolation", "aislamiento", "commit", "rollback", "wal", "checkpoint", "snapshot"),
+        "storage_io": ("disco", "disk", "archivo", "file", "filesystem", "fsync", "atomic", "atomico", "persistencia", "persistence", "json", "jsonl", "csv", "parquet"),
+        "performance": ("rendimiento", "performance", "velocidad", "speed", "throughput", "p99", "optimizacion", "optimization", "complejidad", "complexity", "cuello", "bottleneck", "profiling"),
+        "division_math": ("division", "divide", "dividir", "divisor", "zero", "cero", "zerodivisionerror", "modulo", "remainder", "overflow", "underflow", "bitvector", "arithmetic", "aritmetica"),
+        "bounds_array": ("bounds", "limite", "outofbounds", "array", "arreglo", "lista", "slice", "rango", "range", "offbyone", "longitud"),
+        "null_safety": ("null", "none", "nil", "nullptr", "dereference", "desreferencia", "optional", "opcional", "nullable", "nonnull", "missing", "faltante", "keyerror"),
+        "loops_termination": ("bucle", "loop", "while", "terminacion", "termination", "variant", "variante", "decreases", "infinito", "infinite", "hang", "cuelgue"),
+        "exceptions": ("except", "try", "catch", "raise", "throw", "silencioso", "silent", "logging", "traza", "traceback"),
+        "container_cloud": ("docker", "container", "contenedor", "kubernetes", "k8s", "pod", "cloud", "nube", "serverless", "lambda", "cluster", "deploy", "despliegue"),
+        "api_rpc": ("api", "rest", "graphql", "jsonrpc", "mcp", "endpoint", "ruta", "route", "webhook", "payload", "openapi", "swagger"),
+        "cookies_browser": ("cookie", "cookies", "httponly", "samesite", "secure", "cors", "origin", "origen", "iframe", "browser", "navegador", "chromium", "playwright"),
+        "color_typography": ("color", "contraste", "contrast", "oklch", "oklab", "srgb", "fuente", "font", "tipografia", "typography", "clamp", "fluido", "fluid"),
+        "animation_physics": ("animacion", "animation", "transicion", "transition", "spring", "resorte", "ode", "linear", "easing", "compositor", "gpu", "fps", "jank"),
+        "postgres_ddl": ("ddl", "migracion", "migration", "partition", "particion", "vacuum", "reindex", "concurrently", "pg_repack", "expand", "contract", "trigger", "disparador"),
+        "multi_tenant": ("tenant", "inquilino", "multitenant", "policy", "politica", "supavisor", "role", "rol", "privilegio", "privilege"),
+        "distributed_bft": ("bizantino", "byzantine", "dag", "epoch", "epoca", "lease", "arrendamiento", "leader", "lider", "failover", "replica", "replicacion", "replication"),
+        "quantum_error": ("cuantico", "quantum", "qubit", "qec", "stabilizer", "estabilizador", "qldpc", "magic", "entanglement", "entrelazamiento", "ftqc", "clifford"),
+        "rust_systems": ("rust", "borrow", "ownership", "propiedad", "lifetime", "unsafe", "mir", "miri", "kani", "verus", "aeneas", "ffi"),
+        "lean_coq": ("lean", "lean4", "rocq", "coq", "isabelle", "agda", "tactic", "tactica", "dependent", "dependiente", "hol", "inductive", "inductivo"),
+        "llm_agents": ("agente", "agent", "llm", "prompt", "contexto", "context", "tokens", "inference", "inferencia", "rag", "herramienta", "swarm", "enjambre"),
+        "injection_poison": ("jailbreak", "envenenamiento", "poisoning", "override", "anulacion", "evasion", "homoglifo", "homoglyph", "quarantine", "cuarentena", "exfiltracion", "exfiltration"),
+        "patch_repair": ("parche", "patch", "reparacion", "repair", "fix", "arreglar", "diff", "refactor", "refactorizar", "regression", "regresion"),
+        "evolution_pareto": ("evolucion", "evolution", "pareto", "torneo", "tournament", "dgm", "alphaevolve", "fitness", "aptitud", "mutante", "mutant", "dominancia", "dominance"),
+        "serialization": ("serializacion", "serialization", "deserializacion", "deserialization", "pickle", "yaml", "toml", "cbor", "protobuf", "parse", "encode"),
+        "regex_redos": ("regex", "regexp", "redos", "backtracking", "retroceso", "patron", "pattern", "dfa", "nfa", "match", "coincidencia"),
+        "file_path_traversal": ("traversal", "path", "directorio", "directory", "symlink", "enlace", "canonical", "canonico", "sandbox", "chroot", "jail"),
+        "rate_limiting": ("ratelimit", "limitar", "throttle", "estrangulamiento", "backpressure", "contrapresion", "bucket", "cubeta", "quota", "cuota", "dos", "slowloris"),
+        "circuit_breaker": ("circuit", "circuito", "retry", "reintento", "backoff", "jitter", "idempotente", "idempotent", "deduplicacion", "deduplication", "saga", "compensacion"),
+        "observability": ("telemetria", "telemetry", "metrica", "metric", "log", "registro", "trace", "span", "audit", "auditoria", "monitor", "monitoreo"),
+        "time_clocks": ("tiempo", "time", "clock", "reloj", "hlc", "timestamp", "monotonic", "monotono", "skew", "deriva", "uuidv7", "ttl", "expiracion"),
+        "cache_eviction": ("eviction", "desalojo", "lru", "fifo", "lfu", "hit", "miss", "invalidation", "invalidacion", "stale", "obsoleto", "prefetch"),
+        "compression": ("compresion", "compression", "zlib", "gzip", "zstd", "lz4", "quantization", "cuantizacion", "sparse", "disperso", "sketch", "boceto"),
+        "process_subprocess": ("proceso", "process", "subprocess", "subproceso", "shell", "comando", "command", "exec", "spawn", "popen", "pid", "daemon"),
+        "windows_excel_vba": ("windows", "excel", "vba", "office", "ptrsafe", "winspool", "pyinstaller", "exe", "powershell", "msvcrt", "win32"),
+        "documentation": ("documentacion", "documentation", "doc", "docs", "docstring", "manual", "especificacion", "specification", "readme", "guia", "guide", "stakeholder"),
+        "email_comm": ("correo", "email", "mail", "asunto", "subject", "destinatario", "recipient", "entrega", "delivery", "link", "drive"),
+        "config_secrets": ("config", "configuracion", "env", "secret", "secreto", "apikey", "key", "clave", "redact", "enmascarar", "mask"),
+        "ci_cd_git": ("git", "branch", "rama", "merge", "fusion", "pipeline", "hook", "precommit", "workflow", "build"),
+        "wasm_sandbox": ("wasm", "webassembly", "aislado", "sterile", "esteril", "capability", "capacidad", "permission", "permiso", "wasmtime"),
+        "queue_messaging": ("cola", "queue", "ringbuffer", "mpmc", "kafka", "pubsub", "broker", "mensaje", "message", "producer", "consumer", "worker"),
+        "load_balancing": ("balanceo", "balancing", "sharding", "fragmentacion", "shard", "consistent", "routing", "enrutamiento", "scheduler"),
+        "hardware_gpu": ("gpu", "cuda", "triton", "warp", "simd", "avx2", "cacheline", "falsesharing", "numa", "dma", "iommu", "nvme"),
+        "economics_cost": ("costo", "cost", "precio", "price", "presupuesto", "budget", "roi", "unit", "economics", "margen", "margin", "hype"),
+        "validation_types": ("validacion", "validation", "tipo", "type", "typing", "tipado", "refinement", "refinamiento", "pydantic", "dataclass", "strict"),
+        "cleanup_hygiene": ("limpieza", "cleanup", "hygiene", "higiene", "bloat", "basura", "dead", "muerto", "unused", "duplicado", "duplicate", "slop"),
+        "state_machine": ("estado", "state", "fsm", "automata", "automaton", "reachability", "alcanzabilidad", "liveness", "vivacidad"),
+        "react_hydration": ("react", "rsc", "hydration", "hidratacion", "componente", "component", "effect", "ssr", "nextjs"),
+        "symbolic_execution": ("simbolico", "symbolic", "concolic", "concolico", "solver", "sat", "unsat", "cdcl", "icp", "z3py"),
+    }
+
+    _BILINGUAL_PHRASE_TO_CLUSTER: Tuple[Tuple[str, str], ...] = (
+        ("base de datos", "database"),
+        ("sql injection", "security"),
+        ("inyeccion sql", "security"),
+        ("zero division", "division_math"),
+        ("division por cero", "division_math"),
+        ("out of bounds", "bounds_array"),
+        ("fuera de rango", "bounds_array"),
+        ("prompt injection", "injection_poison"),
+        ("inyeccion de prompt", "injection_poison"),
+        ("atomic write", "storage_io"),
+        ("escritura atomica", "storage_io"),
+        ("null pointer", "null_safety"),
+        ("puntero nulo", "null_safety"),
+    )
+
+    _TERM_TO_SYNONYM_CLUSTERS: Dict[str, Tuple[str, ...]] = {}
+    for _cname, _cterms in _BILINGUAL_SYNONYM_CLUSTERS.items():
+        for _cterm in _cterms:
+            _prev = _TERM_TO_SYNONYM_CLUSTERS.get(_cterm, ())
+            if _cname not in _prev:
+                _TERM_TO_SYNONYM_CLUSTERS[_cterm] = _prev + (_cname,)
+
     def __init__(self, vault_path: Optional[Path] = None):
-        base_dir = Path(__file__).resolve().parent.parent.parent
-        self.vault_path = Path(vault_path) if vault_path else (base_dir / self.DEFAULT_VAULT_REL_PATH)
+        self.vault_path = Path(vault_path) if vault_path else (_DEFAULT_KERNEL_BASE_DIR / self.DEFAULT_VAULT_REL_PATH)
         self.rules: List[BitacoraRuleRecord] = []
         self.canon_index: Dict[str, BitacoraRuleRecord] = {}
         self.entity_to_rules: Dict[str, List[str]] = {}
@@ -426,15 +565,17 @@ class AlephOmegaContinualSelfImprovementEngine:
         self.titans_memory = TitansAssociativeMemoryMatrix()
         self.memgpt_pager = MemGPTTieredMemoryPager()
         self.surprise_momentum: float = 0.85
+        self._last_vault_stat: Optional[Tuple[int, int]] = None
         self._load_vault()
 
     @classmethod
     def extract_entities_and_terms(cls, text: str) -> List[str]:
-        tokens = re.findall(r"[A-Za-z0-9_:\-\.]{3,}", text)
+        folded = _fold_accents_lower(text)
+        tokens = re.findall(r"[a-z0-9_:\-\.]{3,}", folded)
         out: List[str] = []
         seen = set()
         for t in tokens:
-            tl = t.lower().strip(".-_:")
+            tl = t.strip(".-_:")
             if len(tl) < 3 or tl in cls.STOP_WORDS:
                 continue
             if tl not in seen:
@@ -443,14 +584,52 @@ class AlephOmegaContinualSelfImprovementEngine:
         return out
 
     @classmethod
+    def canonicalize_bilingual_terms(
+        cls,
+        terms: List[str],
+        text: Optional[str] = None,
+    ) -> Tuple[List[str], List[str]]:
+        """
+        Expande términos técnicos hacia clusters bilingües ES/EN canónicos.
+        Retorna (cluster_tags, synonym_peers) sin duplicados y preservando orden determinista.
+        """
+        clusters: List[str] = []
+        seen_clusters: Set[str] = set()
+        if text:
+            folded_text = _fold_accents_lower(text)
+            for phrase, cname in cls._BILINGUAL_PHRASE_TO_CLUSTER:
+                if phrase in folded_text and cname not in seen_clusters:
+                    seen_clusters.add(cname)
+                    clusters.append(cname)
+
+        for term in terms:
+            for cname in cls._TERM_TO_SYNONYM_CLUSTERS.get(term, ()):
+                if cname not in seen_clusters:
+                    seen_clusters.add(cname)
+                    clusters.append(cname)
+
+        cluster_tags = [f"__syn__{c}" for c in clusters]
+        term_set = set(terms)
+        peers: List[str] = []
+        seen_peers: Set[str] = set()
+        for c in clusters:
+            for syn in cls._BILINGUAL_SYNONYM_CLUSTERS.get(c, ()):
+                if syn not in term_set and syn not in seen_peers and len(syn) >= 3:
+                    seen_peers.add(syn)
+                    peers.append(syn)
+        return (cluster_tags, peers)
+
+    @classmethod
     def compute_semantic_embedding(cls, text: str) -> List[float]:
         """
-        Calcula un embedding denso L2-normalizado en R^{64} mediante proyección aleatoria con signo
-        (Signed Random Projection / Feature Hashing de Weinberger et al.) sobre trigramas de caracteres y tokens.
+        Calcula un embedding denso L2-normalizado en R^{256} mediante proyección aleatoria con signo
+        (Signed Random Projection / Feature Hashing de Weinberger et al.) sobre trigramas/4-gramas,
+        tokens normalizados y clusters canónicos de sinónimos bilingües ES/EN.
         """
         vec = [0.0] * cls.EMBED_DIM
         terms = cls.extract_entities_and_terms(text)
-        if not terms:
+        cluster_tags, _ = cls.canonicalize_bilingual_terms(terms, text=text)
+        if not terms and not cluster_tags:
             return vec
         for tok in terms:
             # Token feature + character 4-grams para tolerancia morfológica bilingüe ES/EN
@@ -460,6 +639,11 @@ class AlephOmegaContinualSelfImprovementEngine:
                 idx = h % cls.EMBED_DIM
                 sign = 1.0 if ((h >> 16) & 1) == 0 else -1.0
                 vec[idx] += sign
+        for ctag in cluster_tags:
+            h = int.from_bytes(hashlib.blake2s(ctag.encode("utf-8"), digest_size=4).digest(), "little")
+            idx = h % cls.EMBED_DIM
+            sign = 1.0 if ((h >> 16) & 1) == 0 else -1.0
+            vec[idx] += 2.2 * sign
         norm = math.sqrt(sum(v * v for v in vec)) or 1.0
         return [v / norm for v in vec]
 
@@ -467,10 +651,85 @@ class AlephOmegaContinualSelfImprovementEngine:
     def _cosine_sim(v1: List[float], v2: List[float]) -> float:
         return max(0.0, math.fsum(map(operator.mul, v1, v2)))
 
+    def _apply_cached_snapshot(self, cached: Dict[str, Any]) -> None:
+        self.rules = list(cached["rules"])
+        self.canon_index = cached["canon_index"]
+        self.entity_to_rules = cached["entity_to_rules"]
+        self.rule_to_entities = cached["rule_to_entities"]
+        self.doc_freqs = cached["doc_freqs"]
+        self.rule_term_freqs = cached["rule_term_freqs"]
+        self.rule_embeddings = cached["rule_embeddings"]
+        self.empirical_fisher_diag = cached["empirical_fisher_diag"]
+        self.avg_doc_len = cached["avg_doc_len"]
+        self._id_to_idx = cached["_id_to_idx"]
+        self._rule_doc_lens = cached["_rule_doc_lens"]
+        self._rule_ent_indices = cached["_rule_ent_indices"]
+        self._rule_inv_deg = cached["_rule_inv_deg"]
+        self._ent_to_idx = cached["_ent_to_idx"]
+        self._ent_rule_indices = cached["_ent_rule_indices"]
+        self._ent_inv_deg = cached["_ent_inv_deg"]
+        self._cow_shared = True
+        self.memgpt_pager.core_memory_rules = dict(cached["core_memory_template"])
+
+    def _build_cache_snapshot(self) -> Dict[str, Any]:
+        return {
+            "rules": tuple(self.rules),
+            "canon_index": dict(self.canon_index),
+            "entity_to_rules": {k: tuple(v) for k, v in self.entity_to_rules.items()},
+            "rule_to_entities": {k: tuple(v) for k, v in self.rule_to_entities.items()},
+            "doc_freqs": dict(self.doc_freqs),
+            "rule_term_freqs": dict(self.rule_term_freqs),
+            "rule_embeddings": dict(self.rule_embeddings),
+            "empirical_fisher_diag": dict(self.empirical_fisher_diag),
+            "avg_doc_len": self.avg_doc_len,
+            "_id_to_idx": dict(self._id_to_idx),
+            "_rule_doc_lens": tuple(self._rule_doc_lens),
+            "_rule_ent_indices": tuple(self._rule_ent_indices),
+            "_rule_inv_deg": tuple(self._rule_inv_deg),
+            "_ent_to_idx": dict(self._ent_to_idx),
+            "_ent_rule_indices": tuple(self._ent_rule_indices),
+            "_ent_inv_deg": tuple(self._ent_inv_deg),
+            "core_memory_template": dict(self.memgpt_pager.core_memory_rules),
+        }
+
+    @classmethod
+    def _store_cache_snapshot(cls, resolved_path: str, stat_sig: Tuple[int, int], snapshot: Dict[str, Any]) -> None:
+        cache_key = (resolved_path, stat_sig[0], stat_sig[1])
+        with _VAULT_INDEX_CACHE_LOCK:
+            stale_keys = [k for k in _VAULT_INDEX_CACHE if k[0] == resolved_path and k != cache_key]
+            for sk in stale_keys:
+                _VAULT_INDEX_CACHE.pop(sk, None)
+            while len(_VAULT_INDEX_CACHE) >= _MAX_VAULT_INDEX_CACHE_ENTRIES and cache_key not in _VAULT_INDEX_CACHE:
+                oldest_key = next(iter(_VAULT_INDEX_CACHE))
+                _VAULT_INDEX_CACHE.pop(oldest_key, None)
+            _VAULT_INDEX_CACHE[cache_key] = snapshot
+
     def _load_vault(self) -> None:
-        if not self.vault_path.exists():
+        try:
+            st = self.vault_path.stat()
+            stat_sig: Optional[Tuple[int, int]] = (st.st_mtime_ns, st.st_size)
+        except OSError:
             self.rules = []
             return
+        raw_path_key = str(self.vault_path)
+        resolved_str = _VAULT_RESOLVED_PATH_CACHE.get(raw_path_key)
+        if resolved_str is None:
+            try:
+                resolved_str = str(self.vault_path.resolve())
+                if len(_VAULT_RESOLVED_PATH_CACHE) < 128:
+                    _VAULT_RESOLVED_PATH_CACHE[raw_path_key] = resolved_str
+            except OSError:
+                resolved_str = raw_path_key
+
+        if stat_sig is not None:
+            cache_key = (resolved_str, stat_sig[0], stat_sig[1])
+            with _VAULT_INDEX_CACHE_LOCK:
+                cached = _VAULT_INDEX_CACHE.get(cache_key)
+            if cached is not None:
+                self._apply_cached_snapshot(cached)
+                self._last_vault_stat = stat_sig
+                return
+
         raw = json.loads(self.vault_path.read_text(encoding="utf-8"))
         loaded: List[BitacoraRuleRecord] = []
         for rdict in raw.get("rules", []):
@@ -499,30 +758,30 @@ class AlephOmegaContinualSelfImprovementEngine:
             )
             loaded.append(rec)
         self.rules = loaded
-        try:
-            st = self.vault_path.stat()
-            self._last_vault_stat = (st.st_mtime_ns, st.st_size)
-        except OSError:
-            self._last_vault_stat = None
+        self._last_vault_stat = stat_sig
         self._rebuild_indices()
+        if stat_sig is not None:
+            self._store_cache_snapshot(resolved_str, stat_sig, self._build_cache_snapshot())
 
     def _rebuild_indices(self) -> None:
-        self.canon_index.clear()
-        self.entity_to_rules.clear()
-        self.rule_to_entities.clear()
-        self.doc_freqs.clear()
-        self.rule_term_freqs.clear()
-        self.rule_embeddings.clear()
-        self.empirical_fisher_diag.clear()
+        self._cow_shared = False
+        self.canon_index = {}
+        self.entity_to_rules = {}
+        self.rule_to_entities = {}
+        self.doc_freqs = {}
+        self.rule_term_freqs = {}
+        self.rule_embeddings = {}
+        self.empirical_fisher_diag = {}
 
         total_len = 0
         for r in self.rules:
             self.canon_index[r.canon_id] = r
-            full_text = f"{r.canon_id} {r.reg_id} {r.shard} {r.categoria} {r.friccion} {r.regla_op} {r.proyecto_fuente}"
+            full_text = f"{r.canon_id} {r.reg_id} {r.shard} {r.categoria} {r.friccion} {r.si_clause} {r.regla_op} {r.proyecto_fuente}"
+            folded_full = _fold_accents_lower(full_text)
             raw_tokens = [
-                t.lower().strip(".-_:")
-                for t in re.findall(r"[A-Za-z0-9_:\-\.]{3,}", full_text)
-                if len(t.strip(".-_:")) >= 3 and t.lower().strip(".-_:") not in self.STOP_WORDS
+                t.strip(".-_:")
+                for t in re.findall(r"[a-z0-9_:\-\.]{3,}", folded_full)
+                if len(t.strip(".-_:")) >= 3 and t.strip(".-_:") not in self.STOP_WORDS
             ]
             total_len += max(1, len(raw_tokens))
             tfs: Dict[str, int] = {}
@@ -599,21 +858,54 @@ class AlephOmegaContinualSelfImprovementEngine:
             prev_hash = r.merkle_hash
         return (len(violations) == 0, prev_hash, violations)
 
-    def measure_topk_retrieval_forgetting(self, k: int = 5, sample_size: int = 18) -> Dict[str, Any]:
+    def measure_topk_retrieval_forgetting(
+        self,
+        k: int = 5,
+        sample_size: int = 18,
+        include_canon_id: bool = False,
+    ) -> Dict[str, Any]:
         """
         Mide empíricamente el olvido catastrófico donde realmente ocurre: en el Top-K de recuperación.
-        Construye consultas ancla a partir de las cláusulas `si_clause` y entidades distintivas de reglas
-        distribuidas en todos los shards y verifica si cada regla objetivo es recuperada en el Top-K.
+        Construye consultas ancla a partir de las cláusulas `si_clause`, `friccion` y entidades distintivas
+        distribuidas en todos los shards (sin fuga de datos por clave primaria `canon_id`/`reg_id` por defecto)
+        y verifica si cada regla objetivo es recuperada en el Top-K.
         """
         if not self.rules:
-            return {"recall_at_k": 1.0, "forgetting_rate_pct": 0.0, "probes_evaluated": 0}
+            return {
+                "recall_at_k": 1.0,
+                "forgetting_rate_pct": 0.0,
+                "probes_evaluated": 0,
+                "k": k,
+                "include_canon_id": include_canon_id,
+            }
 
         step = max(1, len(self.rules) // max(1, sample_size))
         sampled_rules = [self.rules[i] for i in range(0, len(self.rules), step)][:sample_size]
         hits = 0
         for target_rule in sampled_rules:
-            ents = " ".join(self.rule_to_entities.get(target_rule.canon_id, [])[:6])
-            probe_query = f"{target_rule.canon_id} {target_rule.si_clause} {ents}"
+            cid_low = target_rule.canon_id.lower()
+            rid_low = target_rule.reg_id.lower()
+            raw_ents = self.rule_to_entities.get(target_rule.canon_id, [])
+            if include_canon_id:
+                clean_ents = list(raw_ents[:6])
+                ents = " ".join(clean_ents)
+                probe_query = f"{target_rule.canon_id} {target_rule.si_clause} {target_rule.friccion} {ents}"
+            else:
+                clean_ents = [
+                    e for e in raw_ents
+                    if e.lower() not in (cid_low, rid_low)
+                    and cid_low not in e.lower()
+                    and rid_low not in e.lower()
+                ][:6]
+                ents = " ".join(clean_ents)
+                raw_probe = f"{target_rule.si_clause} {target_rule.friccion} {ents}"
+                for id_str in (target_rule.canon_id, target_rule.reg_id):
+                    if id_str:
+                        raw_probe = re.sub(re.escape(id_str), " ", raw_probe, flags=re.IGNORECASE)
+                probe_query = " ".join(raw_probe.split())
+                if not probe_query:
+                    probe_query = target_rule.regla_op
+
             top_matches = self.query_hipporag2_ppr(probe_query, top_k=k)
             retrieved_ids = {m["canon_id"] for m in top_matches}
             if target_rule.canon_id in retrieved_ids:
@@ -626,6 +918,7 @@ class AlephOmegaContinualSelfImprovementEngine:
             "forgetting_rate_pct": forgetting_pct,
             "probes_evaluated": len(sampled_rules),
             "k": k,
+            "include_canon_id": include_canon_id,
         }
 
     def query_hipporag2_ppr(
@@ -638,14 +931,15 @@ class AlephOmegaContinualSelfImprovementEngine:
     ) -> List[Dict[str, Any]]:
         """
         Recuperación asociativa híbrida HippoRAG 2 (arXiv:2502.14802):
-        combina Okapi BM25 + Similitud Coseno sobre Embeddings Semánticos N-Gram LSH (D=64)
-        + Personalized PageRank (PPR) sobre el grafo bipartito (Reglas <-> Entidades Técnicas)
-        + Prior de Información de Fisher EWC.
+        combina Okapi BM25 (con expansión de sinónimos bilingües ES/EN) + Similitud Coseno sobre
+        Embeddings Semánticos N-Gram LSH (D=256) + Personalized PageRank (PPR) sobre el grafo
+        bipartito (Reglas <-> Entidades Técnicas) + Prior de Información de Fisher EWC.
         """
         if not self.rules:
             return []
 
         q_terms = self.extract_entities_and_terms(query)
+        _, syn_peers_raw = self.canonicalize_bilingual_terms(q_terms, text=query)
         q_emb = self.compute_semantic_embedding(query)
         n_docs = len(self.rules)
         if len(self._rule_doc_lens) != n_docs:
@@ -658,16 +952,29 @@ class AlephOmegaContinualSelfImprovementEngine:
         doc_freqs = self.doc_freqs
         rule_term_freqs = self.rule_term_freqs
 
-        # 1. Okapi BM25 lexical & passage score
+        # 1. Okapi BM25 lexical & bilingual synonym expansion score
         bm25_scores = [0.0] * n_docs
         qt_meta = [
             (
                 qt,
                 math.log(1.0 + (n_docs - doc_freqs.get(qt, 1) + 0.5) / (doc_freqs.get(qt, 1) + 0.5)),
                 len(qt) >= 4,
+                1.0,
             )
             for qt in q_terms
         ]
+        syn_meta = [
+            (
+                sp,
+                math.log(1.0 + (n_docs - doc_freqs[sp] + 0.5) / (doc_freqs[sp] + 0.5)),
+                False,
+                0.45,
+            )
+            for sp in syn_peers_raw
+            if sp in doc_freqs
+        ]
+        all_q_meta = qt_meta + syn_meta
+
         for ri, r in enumerate(self.rules):
             if shard_upper and r.shard.upper() != shard_upper:
                 continue
@@ -675,10 +982,10 @@ class AlephOmegaContinualSelfImprovementEngine:
             doc_len = self._rule_doc_lens[ri]
             k1_norm = k1 * (1.0 - b + b * (doc_len / avg_dl))
             score = 0.0
-            for qt, idf, sub_ok in qt_meta:
+            for qt, idf, sub_ok, q_weight in all_q_meta:
                 tf = tfs.get(qt, 0)
                 if tf > 0:
-                    score += idf * ((tf * (k1 + 1.0)) / (tf + k1_norm))
+                    score += q_weight * idf * ((tf * (k1 + 1.0)) / (tf + k1_norm))
                 elif sub_ok:
                     for tok in tfs:
                         if qt in tok or tok in qt:
@@ -688,13 +995,20 @@ class AlephOmegaContinualSelfImprovementEngine:
 
         # 2. Personalized PageRank (PPR) on Knowledge Graph (Rules <-> Entities)
         rule_ppr = [0.0] * n_docs
-        seed_indices = [self._ent_to_idx[qt] for qt in q_terms if qt in self._ent_to_idx]
-        if seed_indices:
+        seed_pairs: List[Tuple[int, float]] = [
+            (self._ent_to_idx[qt], 1.0) for qt in q_terms if qt in self._ent_to_idx
+        ]
+        seed_pairs.extend(
+            (self._ent_to_idx[sp], 0.35)
+            for sp in syn_peers_raw
+            if sp in self._ent_to_idx
+        )
+        if seed_pairs:
             restart_arr = [0.0] * n_docs
             tot_restart = 0.0
-            for ei in seed_indices:
+            for ei, s_weight in seed_pairs:
                 cids = self._ent_rule_indices[ei]
-                specificity = 1.0 / max(1.0, math.log2(1.0 + len(cids)))
+                specificity = s_weight / max(1.0, math.log2(1.0 + len(cids)))
                 for ci in cids:
                     if not shard_upper or self.rules[ci].shard.upper() == shard_upper:
                         restart_arr[ci] += specificity
@@ -894,22 +1208,30 @@ class AlephOmegaContinualSelfImprovementEngine:
                 combined_candidate_text
             )
 
-            for existing in self.rules:
+            for idx_r, existing in enumerate(self.rules):
                 if existing.regla_op.strip().lower() == full_regla_op.strip().lower():
-                    existing.ewc_fisher_importance = min(
+                    updated_rec = copy.copy(existing)
+                    updated_rec.ewc_fisher_importance = min(
                         10.0, round(existing.ewc_fisher_importance + 1.5, 2)
                     )
+                    self.rules[idx_r] = updated_rec
+                    if getattr(self, "_cow_shared", False):
+                        self.canon_index = dict(self.canon_index)
+                        self.empirical_fisher_diag = dict(self.empirical_fisher_diag)
+                        self._cow_shared = False
+                    self.canon_index[updated_rec.canon_id] = updated_rec
                     self._compute_empirical_fisher_diagonal()
+                    self.memgpt_pager.sync_core_memory(self.rules)
                     if persist_to_disk and self.vault_path:
                         self.save_vault()
                     return {
                         "status": "CONSOLIDATED_EXISTING_RULE_EWC_BOOSTED",
-                        "canon_id": existing.canon_id,
-                        "ewc_fisher_importance": existing.ewc_fisher_importance,
+                        "canon_id": updated_rec.canon_id,
+                        "ewc_fisher_importance": updated_rec.ewc_fisher_importance,
                         "surprise_score": surprise_val,
                         "momentum_score": momentum_val,
                         "total_rules_count": len(self.rules),
-                        "merkle_hash": existing.merkle_hash,
+                        "merkle_hash": updated_rec.merkle_hash,
                     }
 
             next_idx = len(self.rules) + 1
@@ -1423,7 +1745,9 @@ class AlephOmegaContinualSelfImprovementEngine:
             _os.replace(tmp_path, str(self.vault_path))
             try:
                 st = self.vault_path.stat()
-                self._last_vault_stat = (st.st_mtime_ns, st.st_size)
+                stat_sig = (st.st_mtime_ns, st.st_size)
+                self._last_vault_stat = stat_sig
+                self._store_cache_snapshot(str(self.vault_path.resolve()), stat_sig, self._build_cache_snapshot())
             except OSError:
                 pass
             self._sync_repo_certificate_if_present()

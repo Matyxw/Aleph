@@ -15,10 +15,13 @@ Integra en un único Kernel determinista:
 from __future__ import annotations
 from dataclasses import asdict
 import ast
+import math
+import re
+import threading
 import uuid
 import time
 from pathlib import Path
-from typing import Dict, Any, Callable, Optional, List
+from typing import Dict, Any, Callable, Optional, List, Sequence, Tuple
 from aleph_core.config import DB_PATH, JOURNALS_DIR
 from aleph_core.state.store import StateStore, SessionCheckpoint, CachedTaskResult
 from aleph_core.state.epistemic import EpistemicClaim, EpistemicStatus, VerificationGate
@@ -1153,11 +1156,53 @@ class AlephUniversalMCPServer:
     Cline, Antigravity CLI, Zed o VS Code sin dependencias externas.
     """
     PROTOCOL_VERSION = "2025-06-18"
+    _MANIFEST_CACHE_LOCK = threading.RLock()
+    _TOOLS_MANIFEST_CACHE: Optional[Tuple[Dict[str, Any], ...]] = None
+    _DOT_ALEPH_TOOL_NAMES_CACHE: Optional[frozenset] = None
+    _TOOL_SCHEMA_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+    _SEARCH_INDEX_CACHE: Optional[Dict[str, Any]] = None
+    _SEARCH_CHUNK_RE = re.compile(r"[A-Za-z0-9]+")
+    _SEARCH_CAMEL_RE = re.compile(r"([a-z0-9])([A-Z])|([A-Za-z])([0-9])|([0-9])([A-Za-z])")
+    _CORE_TOOL_NAMES = frozenset({
+        "aleph_verify_and_repair",
+        "aleph_apply_semantic_patch",
+        "aleph_run_optimality_tournament",
+        "aleph_bitacora_query_hipporag2_ppr",
+        "aleph_bitacora_enforce_pre_turn_gate",
+        "aleph_bitacora_learn_experiential_rule",
+        "aleph_omega_dgm_alphaevolve_self_improve",
+        "aleph_bitacora_vault_status_and_telemetry",
+        "aleph_prove_omega_continual_self_improvement_hipporag2_titans_zero_forgetting_and_bitacora_vault",
+    })
+    _COMPACT_TOOL_ORDER = (
+        "aleph_verify_and_repair",
+        "aleph_apply_semantic_patch",
+        "aleph_run_optimality_tournament",
+        "aleph_bitacora_query_hipporag2_ppr",
+        "aleph_bitacora_enforce_pre_turn_gate",
+        "aleph_bitacora_learn_experiential_rule",
+        "aleph_omega_dgm_alphaevolve_self_improve",
+        "aleph_bitacora_vault_status_and_telemetry",
+        "aleph_prove_omega_continual_self_improvement_hipporag2_titans_zero_forgetting_and_bitacora_vault",
+        "aleph_sovereign_execute",
+        "aleph_route_skills",
+        "aleph_audit_code",
+        "aleph_verify_z3",
+        "aleph_design_create",
+        "aleph_swarm_governor_50_orchestrate",
+    )
 
     def __init__(self, engine: Optional[AlephEngine] = None):
         self.engine = engine or AlephEngine(engine_id="aleph_mcp_server_v3")
         self._dot_aleph_srv: Optional[Any] = None
-        self._dot_aleph_tool_names: Optional[set] = None
+        cls = type(self)
+        self._dot_aleph_tool_names: Optional[set] = (
+            set(cls._DOT_ALEPH_TOOL_NAMES_CACHE)
+            if cls._DOT_ALEPH_TOOL_NAMES_CACHE is not None
+            else None
+        )
+        if cls._TOOL_SCHEMA_CACHE is not None:
+            self._tool_schema_cache = cls._TOOL_SCHEMA_CACHE
 
     @staticmethod
     def _ensure_dot_aleph_paths() -> None:
@@ -1221,6 +1266,13 @@ class AlephUniversalMCPServer:
         return self._dot_aleph_srv
 
     def get_tools_manifest(self) -> List[Dict[str, Any]]:
+        cls = type(self)
+        cached = cls._TOOLS_MANIFEST_CACHE
+        if cached is not None:
+            if self._dot_aleph_tool_names is None and cls._DOT_ALEPH_TOOL_NAMES_CACHE is not None:
+                self._dot_aleph_tool_names = set(cls._DOT_ALEPH_TOOL_NAMES_CACHE)
+            return list(cached)
+
         tools = [
             {
                 "name": "aleph_verify_and_repair",
@@ -8323,15 +8375,158 @@ class AlephUniversalMCPServer:
                 },
             },
         ]
-        self._ensure_dot_aleph_paths()
-        import lib.aleph_mcp_server as _dot_srv_mod
-        existing_names = {t['name'] for t in tools}
-        for _t in _dot_srv_mod.MCP_TOOLS_SCHEMA:
-            if _t['name'] not in existing_names:
-                tools.append(_t)
-                existing_names.add(_t['name'])
-        self._dot_aleph_tool_names = {t['name'] for t in _dot_srv_mod.MCP_TOOLS_SCHEMA}
-        return tools
+        cls = type(self)
+        with cls._MANIFEST_CACHE_LOCK:
+            cached = cls._TOOLS_MANIFEST_CACHE
+            if cached is not None:
+                if self._dot_aleph_tool_names is None and cls._DOT_ALEPH_TOOL_NAMES_CACHE is not None:
+                    self._dot_aleph_tool_names = set(cls._DOT_ALEPH_TOOL_NAMES_CACHE)
+                return list(cached)
+            self._ensure_dot_aleph_paths()
+            import lib.aleph_mcp_server as _dot_srv_mod
+            existing_names = {t['name'] for t in tools}
+            for _t in _dot_srv_mod.MCP_TOOLS_SCHEMA:
+                if _t['name'] not in existing_names:
+                    tools.append(_t)
+                    existing_names.add(_t['name'])
+            dot_names = frozenset(t['name'] for t in _dot_srv_mod.MCP_TOOLS_SCHEMA)
+            cls._DOT_ALEPH_TOOL_NAMES_CACHE = dot_names
+            cls._TOOL_SCHEMA_CACHE = {
+                t['name']: t.get('inputSchema', {}).get('properties', {})
+                for t in tools
+            }
+            cls._TOOLS_MANIFEST_CACHE = tuple(tools)
+            self._dot_aleph_tool_names = set(dot_names)
+            self._tool_schema_cache = cls._TOOL_SCHEMA_CACHE
+            return list(cls._TOOLS_MANIFEST_CACHE)
+
+    @classmethod
+    def _tokenize_for_search(cls, text: str) -> List[str]:
+        tokens: List[str] = []
+        for chunk in cls._SEARCH_CHUNK_RE.findall(text):
+            low = chunk.lower()
+            tokens.append(low)
+            split_str = cls._SEARCH_CAMEL_RE.sub(r"\1\3\5 \2\4\6", chunk).lower()
+            for sub in split_str.split():
+                if sub and sub != low:
+                    tokens.append(sub)
+        return tokens
+
+    @classmethod
+    def _get_search_index(cls, manifest: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        cached_idx = cls._SEARCH_INDEX_CACHE
+        if cached_idx is not None:
+            return cached_idx
+        with cls._MANIFEST_CACHE_LOCK:
+            if cls._SEARCH_INDEX_CACHE is not None:
+                return cls._SEARCH_INDEX_CACHE
+
+            tools_tuple = tuple(manifest)
+            n_docs = len(tools_tuple)
+            doc_tfs: List[Dict[str, float]] = []
+            doc_lens: List[float] = []
+            df_counts: Dict[str, int] = {}
+            names_lower: List[str] = []
+            descs_lower: List[str] = []
+
+            for t in tools_tuple:
+                t_name = str(t.get("name", ""))
+                t_desc = str(t.get("description", ""))
+                names_lower.append(t_name.lower())
+                descs_lower.append(t_desc.lower())
+
+                tf_map: Dict[str, float] = {}
+                for tok in cls._tokenize_for_search(t_name):
+                    tf_map[tok] = tf_map.get(tok, 0.0) + 3.0
+                for tok in cls._tokenize_for_search(t_desc):
+                    tf_map[tok] = tf_map.get(tok, 0.0) + 1.0
+
+                for tok in tf_map:
+                    df_counts[tok] = df_counts.get(tok, 0) + 1
+                doc_tfs.append(tf_map)
+                doc_lens.append(max(1.0, sum(tf_map.values())))
+
+            avgdl = sum(doc_lens) / max(1, n_docs)
+            k1 = 1.5
+            b = 0.75
+            inv_lists: Dict[str, List[Tuple[int, float]]] = {}
+
+            for doc_idx, tf_map in enumerate(doc_tfs):
+                dl_norm = k1 * (1.0 - b + b * (doc_lens[doc_idx] / avgdl))
+                for tok, tf in tf_map.items():
+                    df = df_counts[tok]
+                    idf = math.log((n_docs - df + 0.5) / (df + 0.5) + 1.0)
+                    weight = idf * ((tf * (k1 + 1.0)) / (tf + dl_norm))
+                    inv_lists.setdefault(tok, []).append((doc_idx, weight))
+
+            inverted = {tok: tuple(postings) for tok, postings in inv_lists.items()}
+            idx_obj = {
+                "tools": tools_tuple,
+                "names_lower": tuple(names_lower),
+                "descs_lower": tuple(descs_lower),
+                "inverted": inverted,
+            }
+            cls._SEARCH_INDEX_CACHE = idx_obj
+            return idx_obj
+
+    def search_tools(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
+        """
+        Progressive MCP Tool Discovery:
+        Búsqueda BM25 + token/subcadena sobre nombres y descripciones del catálogo MCP.
+        """
+        q_str = str(query or "").strip()
+        if not q_str or top_k <= 0:
+            return []
+
+        manifest = self.get_tools_manifest()
+        idx = type(self)._get_search_index(manifest)
+        inverted = idx["inverted"]
+        names_lower = idx["names_lower"]
+        descs_lower = idx["descs_lower"]
+        tools_tuple = idx["tools"]
+
+        q_lower = q_str.lower()
+        q_tokens = list(dict.fromkeys(type(self)._tokenize_for_search(q_str)))
+
+        scores: Dict[int, float] = {}
+        for tok in q_tokens:
+            postings = inverted.get(tok)
+            if postings:
+                for doc_idx, w in postings:
+                    scores[doc_idx] = scores.get(doc_idx, 0.0) + w
+
+        if len(q_lower) >= 2:
+            check_desc_phrase = len(q_lower) >= 4
+            for doc_idx, n_low in enumerate(names_lower):
+                if q_lower == n_low:
+                    scores[doc_idx] = scores.get(doc_idx, 0.0) + 100.0
+                elif q_lower in n_low:
+                    scores[doc_idx] = scores.get(doc_idx, 0.0) + 12.0
+                elif check_desc_phrase and q_lower in descs_lower[doc_idx]:
+                    scores[doc_idx] = scores.get(doc_idx, 0.0) + 4.0
+
+        for tok in q_tokens:
+            if len(tok) < 3:
+                continue
+            for doc_idx, n_low in enumerate(names_lower):
+                if tok in n_low:
+                    scores[doc_idx] = scores.get(doc_idx, 0.0) + 3.0
+                elif tok in descs_lower[doc_idx]:
+                    scores[doc_idx] = scores.get(doc_idx, 0.0) + 1.0
+
+        if not scores:
+            return []
+
+        ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))[:top_k]
+        return [
+            {
+                "name": tools_tuple[doc_idx]["name"],
+                "description": tools_tuple[doc_idx].get("description", ""),
+                "inputSchema": tools_tuple[doc_idx].get("inputSchema", {}),
+                "relevance_score": round(float(sc), 6),
+            }
+            for doc_idx, sc in ranked
+        ]
 
     def handle_jsonrpc_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         req_id = request.get("id")
@@ -8358,27 +8553,59 @@ class AlephUniversalMCPServer:
                 }
             elif method == "tools/list":
                 import os as _os
-                profile = str(params.get("profile") or _os.environ.get("ALEPH_MCP_PROFILE", "full")).lower()
                 all_tools = self.get_tools_manifest()
-                if profile == "core":
-                    core_names = {
-                        "aleph_verify_and_repair",
-                        "aleph_apply_semantic_patch",
-                        "aleph_run_optimality_tournament",
-                        "aleph_bitacora_query_hipporag2_ppr",
-                        "aleph_bitacora_enforce_pre_turn_gate",
-                        "aleph_bitacora_learn_experiential_rule",
-                        "aleph_omega_dgm_alphaevolve_self_improve",
-                        "aleph_bitacora_vault_status_and_telemetry",
-                        "aleph_prove_omega_continual_self_improvement_hipporag2_titans_zero_forgetting_and_bitacora_vault",
-                    }
-                    filtered_tools = [t for t in all_tools if t["name"] in core_names]
+                query = params.get("query")
+                profile = str(params.get("profile") or _os.environ.get("ALEPH_MCP_PROFILE", "full")).lower()
+                if isinstance(query, str) and query.strip():
+                    try:
+                        top_k = int(params.get("top_k", 10))
+                    except (TypeError, ValueError):
+                        top_k = 10
+                    filtered_tools = self.search_tools(query.strip(), top_k=top_k)
+                elif profile == "core":
+                    filtered_tools = [t for t in all_tools if t["name"] in self._CORE_TOOL_NAMES]
+                elif profile == "compact":
+                    try:
+                        top_k = max(1, min(int(params.get("top_k", 10)), len(all_tools)))
+                    except (TypeError, ValueError):
+                        top_k = 10
+                    tool_by_name = {t["name"]: t for t in all_tools}
+                    compact_list = [
+                        tool_by_name[name]
+                        for name in self._COMPACT_TOOL_ORDER
+                        if name in tool_by_name
+                    ]
+                    if len(compact_list) < top_k:
+                        seen = {t["name"] for t in compact_list}
+                        for t in all_tools:
+                            if t["name"] not in seen:
+                                compact_list.append(t)
+                                seen.add(t["name"])
+                            if len(compact_list) >= top_k:
+                                break
+                    filtered_tools = compact_list[:top_k]
                 else:
                     filtered_tools = all_tools
                 return {
                     "jsonrpc": "2.0",
                     "id": req_id,
                     "result": {"tools": filtered_tools}
+                }
+            elif method == "tools/search":
+                query = str(params.get("query") or "")
+                try:
+                    top_k = int(params.get("top_k", 10))
+                except (TypeError, ValueError):
+                    top_k = 10
+                all_tools = self.get_tools_manifest()
+                matches = self.search_tools(query, top_k=top_k)
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "tools": matches,
+                        "total_catalog_tools": len(all_tools),
+                    },
                 }
             elif method == "tools/call":
                 tool_name = params.get("name")
@@ -8407,8 +8634,17 @@ class AlephUniversalMCPServer:
             }
 
     def _dispatch_mcp_tool(self, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
-        if not hasattr(self, '_tool_schema_cache'):
-            self._tool_schema_cache = {t['name']: t.get('inputSchema', {}).get('properties', {}) for t in self.get_tools_manifest()}
+        cls = type(self)
+        if not hasattr(self, '_tool_schema_cache') or self._tool_schema_cache is None:
+            if cls._TOOL_SCHEMA_CACHE is None:
+                manifest = self.get_tools_manifest()
+                with cls._MANIFEST_CACHE_LOCK:
+                    if cls._TOOL_SCHEMA_CACHE is None:
+                        cls._TOOL_SCHEMA_CACHE = {
+                            t['name']: t.get('inputSchema', {}).get('properties', {})
+                            for t in manifest
+                        }
+            self._tool_schema_cache = cls._TOOL_SCHEMA_CACHE
         args = _MCPDefaultArgsDict(args or {}, self._tool_schema_cache.get(tool_name))
         arguments = args
         if tool_name == "aleph_verify_and_repair":

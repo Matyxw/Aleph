@@ -29,6 +29,11 @@ import numpy as np
 
 VSA_DIMENSION_BITS: int = 10240
 VSA_WORDS_64: int = 160
+_POPCNT_U8: np.ndarray = np.array([bin(i).count("1") for i in range(256)], dtype=np.uint8)
+_VSA_BIT_SHIFTS_64: np.ndarray = np.arange(64, dtype=np.uint64)
+_VSA_TIE_MASK_EVEN: np.ndarray = (
+    (np.arange(VSA_WORDS_64)[:, None] + np.arange(64)[None, :]) % 2
+) == 1
 RVQ_STAGES: int = 8
 RVQ_CENTROIDS: int = 256
 RVQ_LUT_FLOATS: int = RVQ_STAGES * RVQ_CENTROIDS
@@ -170,8 +175,8 @@ class V6AlgorithmicFallbackEmulator:
             raise ValueError(f"Los hipervectores deben tener forma ({VSA_WORDS_64},)")
 
         bound = np.bitwise_xor(a, b)
-        # Conteo rápido vectorizado sobre vista uint8
-        hamming = int(np.unpackbits(bound.view(np.uint8)).sum())
+        # Conteo rápido vectorizado vía tabla LUT _POPCNT_U8 sobre vista uint8
+        hamming = int(_POPCNT_U8[bound.view(np.uint8)].sum(dtype=np.uint32))
         cosine_sim = 1.0 - (2.0 * float(hamming) / float(VSA_DIMENSION_BITS))
         return hamming, cosine_sim, (bound if return_bound else None)
 
@@ -321,47 +326,74 @@ class V6AlgorithmicFallbackEmulator:
     @staticmethod
     def bundle_majority(vectors: Union[Sequence[np.ndarray], np.ndarray]) -> np.ndarray:
         """
-        Oráculo de respaldo para Superposición Mayoritaria en Python/NumPy.
+        Oráculo de respaldo vectorizado para Superposición Mayoritaria en Python/NumPy.
         Garantiza paridad bit a bit exacta respecto a `aleph_vsa_bundle_majority_10240`.
         """
         if isinstance(vectors, np.ndarray) and vectors.ndim == 2:
-            vec_list = [vectors[i] for i in range(vectors.shape[0])]
-        elif isinstance(vectors, (list, tuple)):
-            vec_list = list(vectors)
+            n_vecs = vectors.shape[0]
+            if n_vecs == 0:
+                return np.zeros(VSA_WORDS_64, dtype=np.uint64)
+            if n_vecs == 1:
+                return np.ascontiguousarray(vectors[0], dtype=np.uint64).copy()
+            mat = np.ascontiguousarray(vectors, dtype=np.uint64)
         else:
-            vec_list = [vectors]
+            if isinstance(vectors, (list, tuple)):
+                vec_list = list(vectors)
+            else:
+                vec_list = [vectors]
 
-        if not vec_list:
-            return np.zeros(VSA_WORDS_64, dtype=np.uint64)
-        if len(vec_list) == 1:
-            return np.ascontiguousarray(vec_list[0], dtype=np.uint64).copy()
+            if not vec_list:
+                return np.zeros(VSA_WORDS_64, dtype=np.uint64)
+            if len(vec_list) == 1:
+                return np.ascontiguousarray(vec_list[0], dtype=np.uint64).copy()
 
-        n_vecs = len(vec_list)
+            n_vecs = len(vec_list)
+            mat = np.ascontiguousarray(
+                np.stack([np.asarray(v, dtype=np.uint64) for v in vec_list], axis=0),
+                dtype=np.uint64,
+            )
+
+        if mat.shape != (n_vecs, VSA_WORDS_64):
+            raise ValueError(f"Los hipervectores deben tener forma ({VSA_WORDS_64},)")
+
         half = n_vecs // 2
         is_even = (n_vecs % 2) == 0
 
-        mat = np.ascontiguousarray(
-            np.stack([np.asarray(v, dtype=np.uint64) for v in vec_list], axis=0),
-            dtype=np.uint64,
-        )
-        res = np.zeros(VSA_WORDS_64, dtype=np.uint64)
+        if sys.byteorder == "little":
+            if n_vecs <= 2048:
+                counts = (
+                    np.unpackbits(mat.view(np.uint8), axis=1, bitorder="little")
+                    .sum(axis=0, dtype=np.uint32)
+                    .reshape(VSA_WORDS_64, 64)
+                )
+            else:
+                counts = np.zeros((VSA_WORDS_64, 64), dtype=np.uint32)
+                for start in range(0, n_vecs, 2048):
+                    chunk = mat[start : start + 2048]
+                    counts += (
+                        np.unpackbits(chunk.view(np.uint8), axis=1, bitorder="little")
+                        .sum(axis=0, dtype=np.uint32)
+                        .reshape(VSA_WORDS_64, 64)
+                    )
 
-        for w in range(VSA_WORDS_64):
-            word_res = np.uint64(0)
-            col_words = mat[:, w]
+            win_bits = counts > half
+            if is_even:
+                win_bits |= (counts == half) & _VSA_TIE_MASK_EVEN
+            return np.packbits(win_bits.reshape(-1), bitorder="little").view(np.uint64)
 
-            for bit in range(64):
-                mask = np.uint64(1 << bit)
-                count = int(np.count_nonzero(col_words & mask))
+        bit_shifts = _VSA_BIT_SHIFTS_64
+        if n_vecs <= 512:
+            counts = ((mat[:, :, None] >> bit_shifts) & np.uint64(1)).sum(axis=0, dtype=np.int64)
+        else:
+            counts = np.zeros((VSA_WORDS_64, 64), dtype=np.int64)
+            for start in range(0, n_vecs, 256):
+                chunk = mat[start : start + 256]
+                counts += ((chunk[:, :, None] >> bit_shifts) & np.uint64(1)).sum(axis=0, dtype=np.int64)
 
-                if count > half:
-                    word_res |= mask
-                elif is_even and count == half:
-                    if ((w + bit) % 2) == 1:
-                        word_res |= mask
-
-            res[w] = word_res
-        return res
+        win_bits = counts > half
+        if is_even:
+            win_bits = win_bits | ((counts == half) & _VSA_TIE_MASK_EVEN)
+        return np.bitwise_or.reduce(win_bits.astype(np.uint64) << bit_shifts[None, :], axis=1)
 
     vsa_bundle_majority = bundle_majority
 
@@ -372,19 +404,19 @@ class V6AlgorithmicFallbackEmulator:
         k: int = 10,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Oráculo de respaldo para Escaneo Batch Hamming Top-K en NumPy.
+        Oráculo de respaldo para Escaneo Batch Hamming Top-K en NumPy con LUT POPCNT.
         """
         q = np.asarray(query, dtype=np.uint64).reshape(VSA_WORDS_64)
         corp = np.asarray(corpus, dtype=np.uint64).reshape(-1, VSA_WORDS_64)
         num_vecs = corp.shape[0]
 
-        if num_vecs == 0 or k == 0:
+        if num_vecs == 0 or k <= 0:
             return np.empty(0, dtype=np.uint64), np.empty(0, dtype=np.uint32)
 
         actual_k = min(k, num_vecs)
 
         xor_mat = np.bitwise_xor(corp, q)
-        distances = np.unpackbits(xor_mat.view(np.uint8)).reshape(num_vecs, -1).sum(axis=1).astype(np.uint32)
+        distances = _POPCNT_U8[xor_mat.view(np.uint8)].sum(axis=1, dtype=np.uint32)
 
         sorted_indices = np.argsort(distances, kind="stable")[:actual_k]
         top_indices = sorted_indices.astype(np.uint64)

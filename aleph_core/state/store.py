@@ -11,7 +11,9 @@ Implementa SQLite con WAL, mutaciones atómicas en 2 fases en disco y tablas par
 """
 import os
 import sqlite3
+import tempfile
 import threading
+import weakref
 import json
 import time
 import zlib
@@ -19,11 +21,27 @@ import base64
 import uuid
 import hashlib
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Set, Tuple
 from dataclasses import dataclass, field
 from contextlib import contextmanager
 from aleph_core.config import DB_PATH, SQLITE_TIMEOUT_SEC, DEFAULT_LEASE_TIMEOUT_SEC
 from aleph_core.state.epistemic import EpistemicClaim, EpistemicStatus
+
+
+def _is_ephemeral_tempdir_path(db_path: Path) -> bool:
+    """Detecta directorios temporales efímeros (p. ej. tempfile.TemporaryDirectory) en Windows."""
+    try:
+        resolved = db_path.resolve()
+        tmp_root = Path(tempfile.gettempdir()).resolve()
+        if tmp_root not in resolved.parents:
+            return False
+        rel = resolved.relative_to(tmp_root)
+        if len(rel.parts) < 2:
+            return False
+        top_dir = rel.parts[0]
+        return top_dir.startswith("tmp") or top_dir.startswith("ab_")
+    except Exception:
+        return False
 
 @dataclass
 class SessionCheckpoint:
@@ -50,42 +68,133 @@ class CachedTaskResult:
     created_at: float
 
 class StateStore:
-    def __init__(self, db_path: Path = DB_PATH):
+    def __init__(self, db_path: Path = DB_PATH, pool_connections: Optional[bool] = None):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db_lock = threading.RLock()
+        self._local = threading.local()
+        self._pooled_conns: Dict[int, sqlite3.Connection] = {}
+        self._closed_conns_count: int = 0
+        self._pool_connections_override = pool_connections
+        self._pool_depth = 0
         self._wal_initialized = False
+        self._finalizer = weakref.finalize(
+            self,
+            StateStore._close_all_pooled_conns,
+            self._pooled_conns,
+            self._db_lock,
+        )
         self._init_db()
+
+    @staticmethod
+    def _close_all_pooled_conns(
+        pooled_conns: Dict[int, sqlite3.Connection],
+        lock: threading.RLock,
+    ) -> int:
+        closed = 0
+        with lock:
+            for tid, conn in list(pooled_conns.items()):
+                try:
+                    conn.close()
+                    closed += 1
+                except Exception:
+                    pass
+                pooled_conns.pop(tid, None)
+        return closed
+
+    def _should_pool(self) -> bool:
+        if self._pool_depth > 0:
+            return True
+        if self._pool_connections_override is not None:
+            return bool(self._pool_connections_override)
+        if os.name == "nt" and _is_ephemeral_tempdir_path(self.db_path):
+            return False
+        return True
+
+    def close(self) -> None:
+        """Cierra de forma determinista todas las conexiones SQLite activas del pool thread-local."""
+        with self._db_lock:
+            self._closed_conns_count += self._close_all_pooled_conns(self._pooled_conns, self._db_lock)
+            self._local.conn = None
+
+    def __enter__(self) -> "StateStore":
+        with self._db_lock:
+            self._pool_depth += 1
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        with self._db_lock:
+            self._pool_depth = max(0, self._pool_depth - 1)
+            if self._pool_depth == 0:
+                self.close()
+
+    def _open_configured_connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self.db_path), timeout=SQLITE_TIMEOUT_SEC, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        if not self._wal_initialized:
+            try:
+                res = conn.execute("PRAGMA journal_mode = WAL;").fetchone()
+                if not res or str(res[0]).lower() != "wal":
+                    conn.execute("PRAGMA journal_mode = MEMORY;")
+                conn.execute("PRAGMA wal_autocheckpoint = 1000;")
+            except sqlite3.OperationalError:
+                conn.close()
+                fallback = Path(tempfile.gettempdir()) / self.db_path.name
+                self.db_path = fallback
+                conn = sqlite3.connect(str(self.db_path), timeout=SQLITE_TIMEOUT_SEC, check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA journal_mode = WAL;")
+                conn.execute("PRAGMA wal_autocheckpoint = 1000;")
+            self._wal_initialized = True
+        conn.execute(f"PRAGMA busy_timeout = {int(SQLITE_TIMEOUT_SEC * 1000)};")
+        conn.execute("PRAGMA synchronous = NORMAL;")
+        conn.execute("PRAGMA foreign_keys = ON;")
+        return conn
 
     @contextmanager
     def _connection(self):
-        """Context manager que asegura apertura con WAL, busy_timeout y cierre determinista de handles."""
+        """Context manager con pooling thread-local WAL, reuse seguro y cierre determinista."""
         with self._db_lock:
-            conn = sqlite3.connect(str(self.db_path), timeout=SQLITE_TIMEOUT_SEC, check_same_thread=False)
-            conn.row_factory = sqlite3.Row
-            if not self._wal_initialized:
-                try:
-                    res = conn.execute("PRAGMA journal_mode = WAL;").fetchone()
-                    if not res or str(res[0]).lower() != "wal":
-                        conn.execute("PRAGMA journal_mode = MEMORY;")
-                    conn.execute("PRAGMA wal_autocheckpoint = 1000;")
-                except sqlite3.OperationalError:
-                    conn.close()
-                    import tempfile
-                    fallback = Path(tempfile.gettempdir()) / self.db_path.name
-                    self.db_path = fallback
-                    conn = sqlite3.connect(str(self.db_path), timeout=SQLITE_TIMEOUT_SEC, check_same_thread=False)
-                    conn.row_factory = sqlite3.Row
-                    conn.execute("PRAGMA journal_mode = WAL;")
-                    conn.execute("PRAGMA wal_autocheckpoint = 1000;")
-                self._wal_initialized = True
-            conn.execute(f"PRAGMA busy_timeout = {int(SQLITE_TIMEOUT_SEC * 1000)};")
-            conn.execute("PRAGMA synchronous = NORMAL;")
-            conn.execute("PRAGMA foreign_keys = ON;")
+            tid = threading.get_ident()
+            conn = getattr(self._local, "conn", None)
+            if conn is not None:
+                if self._pooled_conns.get(tid) is not conn:
+                    conn = None
+                    self._local.conn = None
+                else:
+                    try:
+                        _ = conn.in_transaction
+                    except sqlite3.Error:
+                        self._pooled_conns.pop(tid, None)
+                        self._closed_conns_count += 1
+                        conn = None
+                        self._local.conn = None
+
+            pool_active = self._should_pool()
+            if conn is None:
+                conn = self._open_configured_connection()
+                if pool_active:
+                    self._local.conn = conn
+                    self._pooled_conns[tid] = conn
+
             try:
                 yield conn
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
             finally:
-                conn.close()
+                if not self._should_pool():
+                    if getattr(self._local, "conn", None) is conn:
+                        self._local.conn = None
+                    self._pooled_conns.pop(tid, None)
+                    self._closed_conns_count += 1
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
 
     def _init_db(self):
         with self._connection() as conn:
