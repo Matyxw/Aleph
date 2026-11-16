@@ -5,7 +5,7 @@
   "rule_id": "REG-330",
   "node_id": "MASTER-V33",
   "shard": "SovereignOmega_ContinualSelfImprovement_BitacoraVault_ReleaseAudit",
-  "timestamp_utc": "2026-11-16T09:28:16Z",
+  "timestamp_utc": "2026-11-16T11:26:13Z",
   "formal_engines_total": 1580,
   "mcp_tools_total": 752,
   "unit_tests_total": 1389,
@@ -126,10 +126,10 @@
     "aleph_core/verification/semantic_patch.py": "d8684b7e35e3224768765a228eb006ee54b35c77635c02d8375e5c9fbc4d7af1",
     "aleph_core/verification/z3_prover.py": "a47276ec49d8340244fdb4cadde1601d51ef2dff730cb8496567364d00c4cd92",
     "aleph_mcp_client.py": "4fe9ed68d6076bea01f6c908368ea3a7233b92d02cf237821592b514cb011d3c",
-    "pyproject.toml": "9797089f52e5bfbd8b12307d55385cd75a1612117f5704c7a28f496409b25d09",
-    "requirements.txt": "2f418e6e26a6e75147f25eddad0571307a858ea18f8b99868029fb49e44b7e34"
+    "pyproject.toml": "d96d23be9e9ddafd0f26f49ce9f01ec0ece74108026ea7e6ebb7399d0bc6a644",
+    "requirements.txt": "e68fe77fea6c57e19b8bc396ea34be20b212b0d8f0be6959cd8a63bfa2d4640f"
   },
-  "tree_sha256": "e4399bdf3172447f52a0d42bdc05ac5944c3d4322e7d984b26303797440d1c76",
+  "tree_sha256": "afb235f5a7db272c20743d0f4cb7ed9ebb37d71ade977819d7a83920b40b3c97",
   "python_files_audited": 92,
   "mcp_tools_verified": 752,
   "design_mcp_tools_verified": 19,
