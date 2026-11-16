@@ -292,8 +292,8 @@ class TestHostileProductionResilience(unittest.TestCase):
 
 
 
-    def test_stress_09_mcp_730_and_19_tools_deep_audit_regressions(self) -> None:
-        """STRESS-09: Verifica las 8 categorías de regresión descubiertas en la auditoría profunda de las 730+19 herramientas MCP."""
+    def test_stress_09_mcp_752_unified_tools_deep_audit_regressions(self) -> None:
+        """STRESS-09: Verifica las categorías de regresión descubiertas en la auditoría profunda de las 752 herramientas MCP unificadas."""
         from aleph_core.engine import AlephUniversalMCPServer
         srv = AlephUniversalMCPServer()
         critical_tools = [
@@ -301,6 +301,9 @@ class TestHostileProductionResilience(unittest.TestCase):
             "aleph_visual_stage_synthesizer",
             "aleph_simulate_spring_physics",
             "aleph_compile_design_tokens",
+            "aleph_v4_verify_aep_scm_hcm_pqc_and_bft",
+            "aleph_ide_lifecycle_hook_and_hygiene_gate",
+            "aleph_swarm_governor_50_orchestrate",
             "aleph_audit_agentic_tool_arguments_and_sandbox_escape",
             "aleph_audit_pqc_ed25519_dns_rebinding_and_deserialization",
             "aleph_audit_wasm_memory_prototype_pollution_and_redos",

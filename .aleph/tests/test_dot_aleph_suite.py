@@ -6,7 +6,7 @@ Suite integral de verificación formal y empírica de:
 2. Modelo Causal Estructural de Judea Pearl (`causal_world_model.py`) con cirugía `do(X)`, contrafactuales y VICReg.
 3. Memoria Causal Holográfica VSA de 10,240 bits (`holographic_causal_memory.py`) con XOR autoinverso y Kanerva SDM.
 4. Criptografía Post-Cuántica de Anillo Ciclotómico FIPS 203 (`pqc_crypto_sealing.py`) y sellado TPM 2.0 PCR-16.
-5. Hooks nativos (`pre_tool_use`, `post_tool_use`, `stop_gate`, `user_prompt_submit`, `aleph_antigravity_omega_hook`).
+5. Hooks nativos (`pre_tool_use`, `post_tool_use`, `stop_gate`, `user_prompt_submit`).
 6. Escáner de limpieza e higiene del repositorio (`scan_cleanliness.py`).
 7. Los 8 Pilares SOTA en `AlephOmegaContinualSelfImprovementEngine` (Titans Matrix, Fisher EWC, Retención Top-K,
    MemGPT Pager, ExpeL AST Distillation, AST IFDS Taint Gate y Torneo DGM/AlphaEvolve en vivo).
@@ -234,10 +234,10 @@ class TestDotAlephSovereignSuite(unittest.TestCase):
         self.assertFalse(gate_real["gate_passed"])
 
     def test_no_cloned_manifests_and_repository_hygiene(self):
+        canonical_manifest = _ALEPH / "UNIFIED_GOVERNANCE_MANIFEST.json"
+        self.assertTrue(canonical_manifest.exists(), "Falta el manifiesto canónico único UNIFIED_GOVERNANCE_MANIFEST.json")
         manifests = sorted(_ALEPH.glob("UNIFIED_GOVERNANCE_MANIFEST_*.json"))
-        self.assertGreaterEqual(len(manifests), 15)
-        hashes = [hashlib.sha256(m.read_bytes()).hexdigest() for m in manifests]
-        self.assertEqual(len(hashes), len(set(hashes)), "Se detectaron manifiestos versionados con SHA-256 duplicado")
+        self.assertEqual(manifests, [], f"Se detectaron manifiestos históricos/clonados sobrantes: {manifests}")
 
         hygiene = scan_repository_hygiene(_ROOT)
         self.assertTrue(hygiene["clean"], f"Violación de higiene de repositorio: {hygiene}")
@@ -251,7 +251,15 @@ class TestDotAlephSovereignSuite(unittest.TestCase):
         cert = json.loads(cert_path.read_text(encoding="utf-8"))
         self.assertEqual(cert["schema_version"], "33.0.0-SOTA-SOVEREIGN")
         file_hashes = cert["file_hashes_sha256"]
-        self.assertGreaterEqual(len(file_hashes), 175)
+        self.assertGreaterEqual(len(file_hashes), 100)
+        excluded_parts = {".git", "__pycache__", ".pytest_cache"}
+        excluded_rels = {".aleph-cert.json", ".github/workflows/ci.yml"}
+        disk_rels = {
+            p.relative_to(_ROOT).as_posix()
+            for p in _ROOT.rglob("*")
+            if p.is_file() and not (set(p.parts) & excluded_parts)
+        } - excluded_rels
+        self.assertEqual(set(file_hashes.keys()), disk_rels)
         for rel_path, expected_sha in file_hashes.items():
             fp = _ROOT / rel_path
             self.assertTrue(fp.exists(), f"Archivo certificado faltante en disco: {rel_path}")
@@ -284,7 +292,7 @@ class TestDotAlephSovereignSuite(unittest.TestCase):
         core_tools = resp_core["result"]["tools"]
         self.assertEqual(len(core_tools), 9)
         full_resp = srv.handle_jsonrpc_request({"jsonrpc": "2.0", "id": 78, "method": "tools/list"})
-        self.assertEqual(len(full_resp["result"]["tools"]), 730)
+        self.assertEqual(len(full_resp["result"]["tools"]), 752)
 
 
 if __name__ == "__main__":

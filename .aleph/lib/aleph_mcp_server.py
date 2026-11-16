@@ -58,6 +58,10 @@ from lib.aleph_omega_facade import (
     get_aleph_omega,
 )
 from lib.v5_skills_router import JITRouterEngine as JITSkillsRouter
+from hooks.user_prompt_submit import evaluate_user_prompt
+from hooks.pre_tool_use import evaluate_pre_tool_use
+from hooks.post_tool_use import evaluate_post_tool_use
+from hooks.stop_gate import evaluate_stop_gate
 
 SERVER_NAME = "aleph-omega-sovereign"
 SERVER_VERSION = "7.0.0"
@@ -1079,17 +1083,20 @@ class AlephIDEHooksRunner:
         if not prompt.strip():
             return {"continue": True}
 
+        domain_meta = evaluate_user_prompt({"prompt": prompt})
         route_res = self.omega.route_skills(prompt=prompt, top_k=3, token_budget=1000)
         skills_summary = ", ".join(
             f"{s['skill_id']} ({s.get('score', 1.0):.2f})" for s in route_res.get("skills", [])
         )
+        domains_str = ", ".join(domain_meta.get("routed_domains", []))
         context_block = (
-            f"[ALEPH-OMEGA v7.0 JIT ROUTER ({route_res.get('latency_ms', 0)}ms)]\n"
+            f"[ALEPH-OMEGA v7.0 JIT ROUTER ({route_res.get('latency_ms', 0)}ms) | Domains: {domains_str}]\n"
             f"Activated Skills: {skills_summary}\n"
             f"{route_res.get('hydrated_context', '')}"
         )
         return {
             "continue": True,
+            "routed_domains": domain_meta.get("routed_domains", []),
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",
                 "additionalContext": context_block,
@@ -1129,6 +1136,19 @@ class AlephIDEHooksRunner:
             re.search(r"(?:^|/)test_.*\.py$|.*_test\.py$|(?:^|/)tests/", target_file_str, re.IGNORECASE)
             or "test" in target_file_str.lower()
         )
+        native_pre = evaluate_pre_tool_use({
+            "command": cmd,
+            "code": "" if is_test_file else code_content,
+            "file_path": str(target_file),
+            "language": "python" if target_file_str.endswith(".py") else "",
+        })
+        if not native_pre.get("allowed", True):
+            return {
+                "continue": False,
+                "decision": "block",
+                "reason": f"[ALEPH-OMEGA v7.0 PRE-TOOL HOOK] Blocked write/command: {'; '.join(native_pre.get('reasons', []))}",
+            }
+
         if target_file_str.endswith(".py") and code_content and not is_test_file:
             audit = self.omega.audit_code(
                 code_content,
@@ -1154,6 +1174,7 @@ class AlephIDEHooksRunner:
         if isinstance(tool_resp, (dict, list)) or is_dataclass(tool_resp) or hasattr(tool_resp, "model_dump"):
             tool_resp = json.dumps(_to_json_serializable(tool_resp), ensure_ascii=False)
         if isinstance(tool_resp, str) and len(tool_resp) > 3000:
+            hook_post = evaluate_post_tool_use({"stdout": tool_resp})
             crushed = self.omega.crush_log(tool_resp, max_lines=100)
             return {
                 "continue": True,
@@ -1161,12 +1182,18 @@ class AlephIDEHooksRunner:
                     "hookEventName": "PostToolUse",
                     "crushedOutput": crushed["crushed_text"],
                     "compressionRatio": crushed["metrics"]["compression_ratio"],
+                    "retainedLinesCount": hook_post.get("retained_lines_count"),
                 },
             }
         return {"continue": True}
 
     def _on_stop(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         summary = payload.get("transcript_summary") or payload.get("reason") or "Session completed"
+        stop_eval = evaluate_stop_gate({
+            "verified": bool(payload.get("verified", True)),
+            "retries_count": int(payload.get("retries_count", 0)),
+            "failed_assertions": int(payload.get("failed_assertions", 0)),
+        })
         ep = self.omega.record_causal_episode(
             cause="Agent session turn completed",
             action="Aleph-Omega v7.0 Total Spinal Cord verified execution",
@@ -1175,6 +1202,8 @@ class AlephIDEHooksRunner:
         return {
             "continue": True,
             "alephEpisodeId": ep["episode_id"],
+            "epistemic_friction_index": stop_eval.get("epistemic_friction_index"),
+            "should_distill_rule": stop_eval.get("should_distill_rule"),
         }
 
 

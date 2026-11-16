@@ -25,7 +25,7 @@ aleph = "aleph_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["aleph_core*", "aleph*", "ab_eval*"]
+include = ["aleph_core*", "ab_eval*"]
 
 [tool.pytest.ini_options]
 testpaths = ["aleph_core/tests", ".aleph/tests"]

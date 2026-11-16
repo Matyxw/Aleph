@@ -28406,7 +28406,7 @@ class DotAlephSovereignWorldDesignerAndGovernanceGateProver:
     def verify_and_synthesize(
         cls,
         code_or_manifest: str,
-        target_path: str = ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V11.json",
+        target_path: str = ".aleph/UNIFIED_GOVERNANCE_MANIFEST.json",
         brand_accent_oklch: str = "oklch(0.68 0.19 265)",
     ) -> DotAlephSovereignWorldDesignerReport:
         t0 = time.perf_counter()

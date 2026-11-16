@@ -89,7 +89,7 @@ def cmd_antigravity_always_on(install_user_home: bool = False, start_daemon: boo
         "status": "ANTIGRAVITY_ALWAYS_ON_ACTIVE",
         "kernel_version": "33.0.0",
         "server_name": "el-aleph-sovereign",
-        "mcp_tools_count": 730,
+        "mcp_tools_count": 752,
         "formal_classes_count": 1580,
         "configured_files": installed_paths,
         "stdio_command": f"{sys.executable or 'python3'} {cli_abs} mcp-stdio",
@@ -1059,7 +1059,7 @@ def cmd_awwwards_scrollbars_where_wcag33(path_or_code: str, component_name: str 
     return 0 if rep.passed else 1
 
 
-def cmd_dot_aleph_audit(path_or_code: str, target_path: str = ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V11.json") -> int:
+def cmd_dot_aleph_audit(path_or_code: str, target_path: str = ".aleph/UNIFIED_GOVERNANCE_MANIFEST.json") -> int:
     from aleph_core.verification import DotAlephSovereignWorldDesignerAndGovernanceGateProver
     p = Path(path_or_code)
     source = p.read_text(encoding="utf-8") if p.exists() and p.is_file() else path_or_code
@@ -3260,6 +3260,56 @@ def cmd_kong_cve2026_17578_autojack_contextforge_ssti_vaultwarden_ssrf_audit(tar
     print(json.dumps(asdict(rep), indent=2, ensure_ascii=False))
     return 0 if rep.formal_kong_cve2026_17578_autojack_contextforge_ssti_and_vaultwarden_safe else 1
 
+def cmd_v4_verify() -> int:
+    """Verifica en vivo los 5 motores de .aleph/v4_engine/."""
+    res = AlephUniversalMCPServer()._dispatch_mcp_tool("aleph_v4_verify_aep_scm_hcm_pqc_and_bft", {})
+    print(json.dumps(res, indent=2, ensure_ascii=False))
+    return 0 if res.get("status") == "PASS" else 1
+
+
+def cmd_ide_hook(prompt: str = "Verificar Z3 SMT", command: str = "pytest -q") -> int:
+    """Ejecuta los 4 hooks nativos .aleph/hooks/ y validación de limpieza."""
+    res = AlephUniversalMCPServer()._dispatch_mcp_tool(
+        "aleph_ide_lifecycle_hook_and_hygiene_gate",
+        {"prompt": prompt, "command": command},
+    )
+    print(json.dumps(res, indent=2, ensure_ascii=False))
+    return 0 if res.get("status") == "PASS" else 1
+
+
+def cmd_swarm_50(duration_seconds: float = 0.05) -> int:
+    """Ejecuta SwarmGovernor50 (.aleph/scripts/swarm_governor_50.py)."""
+    res = AlephUniversalMCPServer()._dispatch_mcp_tool(
+        "aleph_swarm_governor_50_orchestrate",
+        {"num_agents": 50, "duration_seconds": duration_seconds},
+    )
+    print(json.dumps(res, indent=2, ensure_ascii=False))
+    return 0 if res.get("status") == "HEALTHY" else 1
+
+
+def cmd_cleanliness(target_dir: str = ".") -> int:
+    """Ejecuta el escáner determinista .aleph/scripts/scan_cleanliness.py."""
+    AlephUniversalMCPServer._ensure_dot_aleph_paths()
+    from scripts.scan_cleanliness import scan_repository_hygiene
+    rep = scan_repository_hygiene(Path(target_dir))
+    print(json.dumps(rep, indent=2, ensure_ascii=False))
+    return 0 if rep.get("clean") else 1
+
+
+def cmd_ab_eval(argv_list: Optional[list] = None) -> int:
+    """Delega al arnés experimental A/B ab_eval/ab_harness.py."""
+    from ab_eval.ab_harness import main as ab_main
+    return int(ab_main(argv_list if argv_list is not None else sys.argv[2:]))
+
+
+def cmd_mcp_client() -> int:
+    """Delega al cliente MCP universal aleph_mcp_client.py."""
+    import aleph_mcp_client
+    sys.argv = [aleph_mcp_client.__file__] + sys.argv[2:]
+    aleph_mcp_client.main()
+    return 0
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "benchmark"
     if cmd == "bitacora-status":
@@ -3502,7 +3552,7 @@ if __name__ == "__main__":
         cn = sys.argv[3] if len(sys.argv) > 3 else "AwwwardsScrollbarsWhereAndWCAG33Stage.tsx"
         sys.exit(cmd_awwwards_scrollbars_where_wcag33(sys.argv[2], cn))
     elif cmd == "dot-aleph-audit" and len(sys.argv) > 2:
-        tp = sys.argv[3] if len(sys.argv) > 3 else ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V11.json"
+        tp = sys.argv[3] if len(sys.argv) > 3 else ".aleph/UNIFIED_GOVERNANCE_MANIFEST.json"
         sys.exit(cmd_dot_aleph_audit(sys.argv[2], tp))
     elif cmd == "aead-cswsh-graphql-audit" and len(sys.argv) > 2:
         sys.exit(cmd_aead_cswsh_graphql_audit(sys.argv[2]))
@@ -4796,6 +4846,22 @@ if __name__ == "__main__":
     elif cmd == "mcp-http":
         p = int(sys.argv[2]) if len(sys.argv) > 2 else 8765
         sys.exit(cmd_mcp_http(p))
+    elif cmd == "v4-verify":
+        sys.exit(cmd_v4_verify())
+    elif cmd == "ide-hook":
+        pr = sys.argv[2] if len(sys.argv) > 2 else "Verificar Z3 SMT"
+        cm = sys.argv[3] if len(sys.argv) > 3 else "pytest -q"
+        sys.exit(cmd_ide_hook(pr, cm))
+    elif cmd == "swarm-50":
+        dur = float(sys.argv[2]) if len(sys.argv) > 2 else 0.05
+        sys.exit(cmd_swarm_50(dur))
+    elif cmd == "cleanliness":
+        td = sys.argv[2] if len(sys.argv) > 2 else "."
+        sys.exit(cmd_cleanliness(td))
+    elif cmd == "ab-eval":
+        sys.exit(cmd_ab_eval())
+    elif cmd == "mcp-client":
+        sys.exit(cmd_mcp_client())
     else:
         print(__doc__)
         sys.exit(0)

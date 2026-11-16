@@ -1156,9 +1156,72 @@ class AlephUniversalMCPServer:
 
     def __init__(self, engine: Optional[AlephEngine] = None):
         self.engine = engine or AlephEngine(engine_id="aleph_mcp_server_v3")
+        self._dot_aleph_srv: Optional[Any] = None
+        self._dot_aleph_tool_names: Optional[set] = None
+
+    @staticmethod
+    def _ensure_dot_aleph_paths() -> None:
+        import os
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent
+        dot_aleph = (repo_root / ".aleph").resolve()
+        os.environ["ALEPH_HOME"] = str(dot_aleph)
+        home_aleph = (Path.home() / ".aleph").resolve()
+
+        def _under(candidate: str, root: Path) -> bool:
+            try:
+                res = Path(candidate).resolve()
+            except OSError:
+                return False
+            return res == root or root in res.parents
+
+        preferred = [
+            str(repo_root),
+            str(dot_aleph),
+            str(dot_aleph / "lib"),
+            str(dot_aleph / "v4_engine"),
+            str(dot_aleph / "scripts"),
+            str(dot_aleph / "hooks"),
+        ]
+        preferred_resolved = {Path(p).resolve() for p in preferred}
+
+        cleaned = []
+        for entry in sys.path:
+            if home_aleph != dot_aleph and entry and _under(entry, home_aleph):
+                continue
+            try:
+                if entry and Path(entry).resolve() in preferred_resolved:
+                    continue
+            except OSError:
+                pass
+            cleaned.append(entry)
+        sys.path[:] = [p for p in preferred if os.path.isdir(p)] + cleaned
+
+        for mod_name in list(sys.modules):
+            top = mod_name.split(".")[0]
+            if top not in {"lib", "scripts", "hooks", "v4_engine"}:
+                continue
+            mod = sys.modules.get(mod_name)
+            mod_file = getattr(mod, "__file__", None)
+            if mod_file and not _under(mod_file, dot_aleph):
+                del sys.modules[mod_name]
+                continue
+            mod_paths = getattr(mod, "__path__", None)
+            if mod_paths and any(not _under(str(p), dot_aleph) for p in mod_paths):
+                del sys.modules[mod_name]
+
+    def _get_dot_aleph_mcp_server(self) -> Any:
+        if self._dot_aleph_srv is None:
+            self._ensure_dot_aleph_paths()
+            import lib.aleph_mcp_server as _dot_srv_mod
+            self._dot_aleph_srv = _dot_srv_mod.AlephMCPServer()
+            self._dot_aleph_tool_names = {t["name"] for t in _dot_srv_mod.MCP_TOOLS_SCHEMA}
+        return self._dot_aleph_srv
 
     def get_tools_manifest(self) -> List[Dict[str, Any]]:
-        return [
+        tools = [
             {
                 "name": "aleph_verify_and_repair",
                 "description": "Verifica formalmente código Python con SMT/ICP y repara automáticamente defectos mediante síntesis inductiva CEGIS (0% falsos positivos).",
@@ -3756,7 +3819,7 @@ class AlephUniversalMCPServer:
                     "type": "object",
                     "properties": {
                         "code_or_manifest": {"type": "string"},
-                        "target_path": {"type": "string", "default": ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V11.json"},
+                        "target_path": {"type": "string", "default": ".aleph/UNIFIED_GOVERNANCE_MANIFEST.json"},
                         "brand_accent_oklch": {"type": "string", "default": "oklch(0.68 0.19 265)"}
                     },
                     "required": ["code_or_manifest"]
@@ -8219,8 +8282,56 @@ class AlephUniversalMCPServer:
             {'name': 'aleph_bitacora_enforce_pre_turn_gate', 'description': 'Compuerta Pre-Turno Always-On: Audita código o planes de ingeniería contra las 350+ reglas internas de la Bitácora en El Aleph antes de ejecutar cambios.', 'inputSchema': {'type': 'object', 'properties': {'code_or_plan': {'type': 'string'}, 'top_k': {'type': 'integer'}}, 'required': ['code_or_plan']}},
             {'name': 'aleph_bitacora_learn_experiential_rule', 'description': 'Aprende y consolida una nueva regla operativa (SI -> ENTONCES -> EVITAR) desde una experiencia o error usando Sorpresa de Titans + ExpeL + TextGrad y la sella en la cadena Merkle interna sin olvidar ninguna regla previa.', 'inputSchema': {'type': 'object', 'properties': {'friction_or_error': {'type': 'string'}, 'si_clause': {'type': 'string'}, 'entonces_clause': {'type': 'string'}, 'evitar_clause': {'type': 'string'}, 'shard': {'type': 'string'}, 'persist_to_disk': {'type': 'boolean'}}, 'required': ['friction_or_error', 'si_clause', 'entonces_clause', 'evitar_clause']}},
             {'name': 'aleph_omega_dgm_alphaevolve_self_improve', 'description': 'Ejecuta un ciclo completo de automejora continua SOTA (Darwin Gödel Machine + AlphaEvolve + HippoRAG 2 PPR + Titans + TextGrad + Voyager AST + CEGIS).', 'inputSchema': {'type': 'object', 'properties': {'task_description': {'type': 'string'}, 'observed_friction': {'type': 'string'}, 'persist_new_rule': {'type': 'boolean'}}}},
-            {'name': 'aleph_bitacora_vault_status_and_telemetry', 'description': 'Devuelve el estado completo de la Bóveda Interna de Bitácora de El Aleph (350+ reglas activas, desglose por nodo, raíz Merkle SHA-256 y verificación de 0.0% olvido catastrófico).', 'inputSchema': {'type': 'object', 'properties': {}}}
+            {'name': 'aleph_bitacora_vault_status_and_telemetry', 'description': 'Devuelve el estado completo de la Bóveda Interna de Bitácora de El Aleph (350+ reglas activas, desglose por nodo, raíz Merkle SHA-256 y verificación de 0.0% olvido catastrófico).', 'inputSchema': {'type': 'object', 'properties': {}}},
+            {
+                'name': 'aleph_v4_verify_aep_scm_hcm_pqc_and_bft',
+                'description': 'Ejecuta y verifica los 5 motores v4 de .aleph/v4_engine/: protocolo binario AEP, Modelo Causal SCM de Pearl, Memoria Holográfica VSA 10.240 bits, criptografía post-cuántica FIPS 203 y consenso DAG-BFT Super-Swarm.',
+                'inputSchema': {
+                    'type': 'object',
+                    'properties': {
+                        'state_hash': {'type': 'string', 'description': 'Hash/estado del árbol a sellar con PQC.'},
+                        'cause': {'type': 'string', 'description': 'Causa raíz a registrar en memoria holográfica VSA.'},
+                        'effect': {'type': 'string', 'description': 'Efecto observado.'},
+                        'remediation': {'type': 'string', 'description': 'Remediación verificada.'},
+                        'total_agents': {'type': 'integer', 'default': 10},
+                    },
+                },
+            },
+            {
+                'name': 'aleph_ide_lifecycle_hook_and_hygiene_gate',
+                'description': 'Ejecuta los 4 hooks nativos de ciclo de vida del IDE (.aleph/hooks/: UserPromptSubmit, PreToolUse, PostToolUse, Stop) y el escáner de higiene del repositorio (.aleph/scripts/scan_cleanliness.py).',
+                'inputSchema': {
+                    'type': 'object',
+                    'properties': {
+                        'prompt': {'type': 'string'},
+                        'command': {'type': 'string'},
+                        'source_code': {'type': 'string'},
+                        'stdout': {'type': 'string'},
+                        'scan_repo': {'type': 'boolean', 'default': False},
+                    },
+                },
+            },
+            {
+                'name': 'aleph_swarm_governor_50_orchestrate',
+                'description': 'Ejecuta el orquestador distribuido SwarmGovernor50 (.aleph/scripts/swarm_governor_50.py) con Multi-Raft, AST-CRDT, SMP, Tarjan DFS, HART v2 y Plumtree Gossip.',
+                'inputSchema': {
+                    'type': 'object',
+                    'properties': {
+                        'num_agents': {'type': 'integer', 'default': 50},
+                        'duration_seconds': {'type': 'number', 'default': 0.05},
+                    },
+                },
+            },
         ]
+        self._ensure_dot_aleph_paths()
+        import lib.aleph_mcp_server as _dot_srv_mod
+        existing_names = {t['name'] for t in tools}
+        for _t in _dot_srv_mod.MCP_TOOLS_SCHEMA:
+            if _t['name'] not in existing_names:
+                tools.append(_t)
+                existing_names.add(_t['name'])
+        self._dot_aleph_tool_names = {t['name'] for t in _dot_srv_mod.MCP_TOOLS_SCHEMA}
+        return tools
 
     def handle_jsonrpc_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         req_id = request.get("id")
@@ -11523,7 +11634,7 @@ class AlephUniversalMCPServer:
             from aleph_core.verification import DotAlephSovereignWorldDesignerAndGovernanceGateProver
             rep = DotAlephSovereignWorldDesignerAndGovernanceGateProver.verify_and_synthesize(
                 code_or_manifest=args.get("code_or_manifest", args.get("code_or_css", args.get("source_code", ""))),
-                target_path=args.get("target_path", ".aleph/UNIFIED_GOVERNANCE_MANIFEST_V11.json"),
+                target_path=args.get("target_path", ".aleph/UNIFIED_GOVERNANCE_MANIFEST.json"),
                 brand_accent_oklch=args.get("brand_accent_oklch", "oklch(0.68 0.19 265)"),
             )
             return rep.to_dict()
@@ -16595,6 +16706,90 @@ class AlephUniversalMCPServer:
                     for sh in sorted({r.shard for r in eng_omega.rules})
                 },
             }
+        elif tool_name == "aleph_v4_verify_aep_scm_hcm_pqc_and_bft":
+            self._ensure_dot_aleph_paths()
+            from v4_engine.aep_protocol import AEPMessageType, AEPProtocolEngine
+            from v4_engine.causal_world_model import UnifiedProgramGraph
+            from v4_engine.holographic_causal_memory import HolographicCausalMemoryEngine
+            from v4_engine.pqc_crypto_sealing import PQCSovereignShield
+            from v4_engine.super_swarm_bft import SuperSwarmOrchestrator
+
+            payload_dict = {"ping": 1, "state_hash": str(args.get("state_hash", "tree_v33"))}
+            frame = AEPProtocolEngine.unpack_frame(
+                AEPProtocolEngine.pack_frame(AEPMessageType.HEARTBEAT, payload_dict)
+            )
+            scm = UnifiedProgramGraph("v4_runtime_gate")
+            scm.add_causal_edge("X", "Y")
+            hcm = HolographicCausalMemoryEngine()
+            digest = hcm.store_causal_episode(
+                "ep_runtime",
+                str(args.get("cause", "overflow")),
+                str(args.get("effect", "crash")),
+                str(args.get("remediation", "clamp")),
+            )
+            shield = PQCSovereignShield()
+            state_hash = str(args.get("state_hash", "merkle_root_v33"))
+            seal = shield.seal_codebase_state(state_hash)
+            pqc_ok = shield.verify_sealed_state(state_hash, seal)
+            agents_n = max(4, int(args.get("total_agents", 10)))
+            swarm = SuperSwarmOrchestrator(total_agents=agents_n, initial_stake_per_agent=1000)
+            dag_res = swarm.execute_dag_round(round_num=1, honest_count=swarm.dag_engine.quorum_threshold)
+            return {
+                "status": "PASS",
+                "aep_verified": frame.decode_json() == payload_dict,
+                "scm_downstream_y": "Y" in scm.downstream_cone("X"),
+                "hcm_digest_hex": digest,
+                "pqc_seal_verified": pqc_ok,
+                "bft_quorum_threshold": swarm.dag_engine.quorum_threshold,
+                "bft_certificates_count": dag_res["certificates_count"],
+            }
+        elif tool_name == "aleph_ide_lifecycle_hook_and_hygiene_gate":
+            self._ensure_dot_aleph_paths()
+            import os as _os
+            from pathlib import Path as _Path
+            from hooks.user_prompt_submit import evaluate_user_prompt
+            from hooks.pre_tool_use import evaluate_pre_tool_use
+            from hooks.post_tool_use import evaluate_post_tool_use
+            from hooks.stop_gate import evaluate_stop_gate
+            from scripts.scan_cleanliness import scan_repository_hygiene, scan_source_cleanliness
+
+            prompt_res = evaluate_user_prompt({"prompt": str(args.get("prompt", "Verificar Z3 SMT y SQL"))})
+            src_code = str(args.get("source_code", "def ok(x: int) -> int:\n    return x\n"))
+            pre_res = evaluate_pre_tool_use({
+                "command": str(args.get("command", "pytest -q")),
+                "code": src_code,
+                "language": "python",
+            })
+            post_res = evaluate_post_tool_use({"stdout": str(args.get("stdout", "OK\n"))})
+            stop_res = evaluate_stop_gate({"verified": bool(pre_res["allowed"]), "retries_count": 0, "failed_assertions": 0})
+            src_clean = scan_source_cleanliness(src_code)
+            repo_clean = None
+            if bool(args.get("scan_repo", False)):
+                repo_root = _Path(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+                repo_clean = scan_repository_hygiene(repo_root)
+            return {
+                "status": "PASS" if (pre_res["allowed"] and src_clean["clean"]) else "BLOCKED",
+                "user_prompt_submit": prompt_res,
+                "pre_tool_use": pre_res,
+                "post_tool_use": post_res,
+                "stop_gate": stop_res,
+                "source_cleanliness": src_clean,
+                "repository_hygiene": repo_clean,
+            }
+        elif tool_name == "aleph_swarm_governor_50_orchestrate":
+            self._ensure_dot_aleph_paths()
+            import tempfile
+            from scripts.swarm_governor_50 import SwarmGovernor50
+
+            n_agents = max(1, int(args.get("num_agents", 50)))
+            dur_s = min(1.0, max(0.01, float(args.get("duration_seconds", 0.05))))
+            with tempfile.TemporaryDirectory(prefix="aleph_swarm50_") as tmp_wt:
+                gov = SwarmGovernor50(num_agents=n_agents, worktree_dir=tmp_wt)
+                return gov.simulate_concurrent_swarm(duration_seconds=dur_s)
+        else:
+            dot_srv = self._get_dot_aleph_mcp_server()
+            if self._dot_aleph_tool_names and tool_name in self._dot_aleph_tool_names:
+                return dot_srv._dispatch_tool(tool_name, dict(args))
         raise ValueError(f"Unknown MCP tool: {tool_name}")
 
     def serve_stdio(self):

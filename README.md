@@ -1,6 +1,6 @@
 # El Aleph v33.0.0 — Sovereign Omega Self-Improving Kernel & Bitácora Vault (Edición SOTA Verificada)
 
-Arquitectura integral de verificación formal, diseño visual físico-matemático y automejora continua sin olvido, verificada al 100 % en tiempo de ejecución real con **1.378 pruebas automatizadas (0 fallos, 0 errores, 0 tests saltados)**.
+Arquitectura integral de verificación formal, diseño visual físico-matemático y automejora continua sin olvido, verificada al 100 % en tiempo de ejecución real con **1.389 pruebas automatizadas (0 fallos, 0 errores; 9 saltadas opcionales en unittest sin navegador live)**.
 
 | Subsistema | Implementación Verificada en Producción |
 | :--- | :--- |
@@ -8,7 +8,7 @@ Arquitectura integral de verificación formal, diseño visual físico-matemátic
 | **Núcleo de Verificación Formal y Taint AST** (`aleph_core/verification/` + `.aleph/lib/aleph_smt_layout_verifier.py`) | Compilador simbólico dual (`Z3VerificationEngine` + solucionador relacional e intervalos en Python puro para `QF_LIA` / `QF_BV` + solucionador analítico exacto por puntos críticos para `QF_LRA` 1D/2D), parcheo quirúrgico sobre AST con prueba de equivalencia relacional (`SemanticPatchEngine`), fallback generativo con shrinking (`PropertyBasedFallback`) y analizador de flujo de datos Taint sobre AST (`ASTIFDSDataflowTaintGate`). |
 | **Motor Visual Soberano V7 y Oráculo Físico en Chromium/Blink Real** (`.aleph/lib/`) | Compiladores isomórficos HTML5 y React 19 TSX, espacio perceptual OKLCH con contraste APCA v0.98G, simulador RK4 de ecuaciones diferenciales de 2.º orden (`aleph_kinetic_ode.py` compilado a CSS `linear(...)`), sintetizador vectorial de 8 escenografías (`aleph_visual_stage_synthesizer.py`) y **Oráculo Físico en Chromium/Blink real** (`aleph_render_oracle.py` vía Chrome DevTools Protocol CDP sobre 6 viewports canónicos de `320px` a `1920px`). |
 | **Motores de Cuarta Generación y Gobernanza de Enjambre** (`.aleph/v4_engine/` + `.aleph/scripts/swarm_governor_50.py`) | Protocolo binario **AEP v4.0** con verificación SHA-256/CRC32 zero-copy y tokens HMAC (`aep_protocol.py`), **Modelo Causal Estructural de Judea Pearl** con cirugía $\text{do}(X)$, contrafactuales en 3 pasos y regularización VICReg (`causal_world_model.py`), **Memoria Holográfica VSA de 10.240 bits** con binding XOR autoinverso y Kanerva SDM (`holographic_causal_memory.py`), **Aritmética de Anillo Ciclotómico PQC FIPS 203** $\mathbb{Z}_{3329}[X]/(X^{256}+1)$ con sellado TPM 2.0 PCR-16 (`pqc_crypto_sealing.py`) y consenso **Narwhal-Bullshark DAG-BFT + Multi-Raft** (`super_swarm_bft.py`, `swarm_governor_50.py`). |
-| **Servidor MCP Blindado y Evaluación A/B** (`aleph_core/engine.py` + `ab_eval/ab_harness.py`) | Servidor JSON-RPC 2.0 con **730 herramientas** (solo 9 tools de lectura auto-aprobadas en `SAFE_AUTO_APPROVE_TOOLS`; daemon HTTP protegido con token Bearer en tiempo constante, validación `Host`/`Origin` anti-DNS-rebinding, sin CORS abierto y límite de payload de 1 MiB) + arnés experimental A/B con **prueba exacta de McNemar**. |
+| **Servidor MCP Blindado y Evaluación A/B** (`aleph_core/engine.py` + `ab_eval/ab_harness.py`) | Servidor JSON-RPC 2.0 unificado con **752 herramientas** (integrando las 730 del núcleo formal, las 19 de diseño/AEOS v7 de `.aleph/lib/aleph_mcp_server.py` y las 3 puertas unificadas para `v4_engine`, hooks/higiene y `SwarmGovernor50`; solo 9 tools de lectura auto-aprobadas en `SAFE_AUTO_APPROVE_TOOLS`; daemon HTTP protegido con token Bearer) + arnés experimental A/B con **prueba exacta de McNemar**. |
 
 ---
 
@@ -16,7 +16,7 @@ Arquitectura integral de verificación formal, diseño visual físico-matemátic
 
 | Indicador | Valor Medido | Comando de Verificación |
 | :--- | :--- | :--- |
-| **Suite Total de Pruebas Unitarias e Integración** | **1.378 OK, 0 fallos, 0 saltados** (`1.270` en `aleph_core/tests` + `108` en `.aleph/tests`) | `python3 aleph_cli.py test` |
+| **Suite Total de Pruebas Unitarias e Integración** | **1.389 OK, 0 fallos** (`1.280` en `aleph_core/tests` + `109` en `.aleph/tests`, 9 saltados sin Playwright live) | `python3 aleph_cli.py test` |
 | **Oráculo Físico en Chromium/Blink Real** | **10 / 10 pruebas pasando en Chromium real** (6 viewports, 0 saltados) | `python3 .aleph/tests/test_aleph_live_oracle.py -v` |
 | **Reglas en Bóveda / Entidades en Grafo** | **350 reglas / 4.742 entidades** (`BASE` 51, `NODE-01` 122, `NODE-02` 3, `NODE-03` 6, `NODE-04` 1, `NODE-05` 52, `NODE-06` 113, `MASTER-V32` 1, `MASTER-V33` 1) | `python3 aleph_cli.py bitacora-status` |
 | **Cadena Merkle SHA-256 y Retención Top-K** | **100 % íntegra** (`Recall@5 = 1.0`, `0.0 %` olvido catastrófico) | `python3 aleph_cli.py bitacora-status` |
@@ -40,7 +40,7 @@ Arquitectura integral de verificación formal, diseño visual físico-matemátic
 ## 3. Comandos Principales
 
 ```bash
-# 1. Instalar en modo editable (PEP 621 pyproject.toml) y ejecutar las 1.378 pruebas
+# 1. Instalar en modo editable (PEP 621 pyproject.toml) y ejecutar las 1.389 pruebas
 pip install -e .
 python3 aleph_cli.py test
 

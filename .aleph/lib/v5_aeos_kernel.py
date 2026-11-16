@@ -386,13 +386,7 @@ class SIMDDiffEngine:
                 self._v6_bridge = get_native_bridge()
             except Exception:
                 self._v6_bridge = None
-        try:
-            from lib.v7_v3_reactor_bridge import SurgicalASTPatchReactor
-            self._reactor = SurgicalASTPatchReactor()
-            if self._reactor.native_dll is not None:
-                self.native_dll = self._reactor.native_dll
-        except Exception:
-            self._reactor = None
+        self._reactor = None
 
     def verify_native_connection(self) -> Dict[str, Any]:
         """Certifica la conexión formal con aleph_simd_myers_levenshtein_u8 a través de v6_native_bridge."""
@@ -471,12 +465,7 @@ class SMTZ3FormalVerifier:
         except ImportError:
             self.z3 = None
 
-        if self.z3_available:
-            try:
-                from lib.v7_v3_reactor_bridge import RealSSAZ3ProverBridge
-                self._bridge = RealSSAZ3ProverBridge(theory=theory, timeout_ms=timeout_ms)
-            except Exception:
-                self._bridge = None
+        # Native SMT Z3 verification runs directly via self.z3
 
     def verify_integer_invariants(
         self,

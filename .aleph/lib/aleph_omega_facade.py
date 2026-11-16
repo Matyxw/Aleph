@@ -364,27 +364,11 @@ except Exception:
     pass
 
 
-# Lazy V3 Reactor classes
-try:
-    from lib.v7_v3_reactor_bridge import (
-        NeuralCodeGraphReactor,
-        RealSSAZ3ProverBridge,
-        SpeculativeBranchRaceReactor,
-        SurgicalASTPatchReactor,
-    )
-except ImportError:
-    try:
-        from v7_v3_reactor_bridge import (
-            NeuralCodeGraphReactor,
-            RealSSAZ3ProverBridge,
-            SpeculativeBranchRaceReactor,
-            SurgicalASTPatchReactor,
-        )
-    except ImportError:
-        NeuralCodeGraphReactor = None  # type: ignore
-        RealSSAZ3ProverBridge = None  # type: ignore
-        SpeculativeBranchRaceReactor = None  # type: ignore
-        SurgicalASTPatchReactor = None  # type: ignore
+# Optional external V3 reactor extension points (merged into AlephOmega in v33)
+NeuralCodeGraphReactor = None  # type: ignore
+RealSSAZ3ProverBridge = None  # type: ignore
+SpeculativeBranchRaceReactor = None  # type: ignore
+SurgicalASTPatchReactor = None  # type: ignore
 
 
 # ============================================================================
@@ -410,8 +394,8 @@ CANONICAL_ROUTING_TABLE: Dict[str, str] = {
     "aleph_supply_chain_auditor": "lib.v5_aeos_kernel.ASTGuard",
     "aleph_tdd_gate": "lib.v5_aeos_kernel.ASTGuard",
     "aleph_eval_harness": "lib.v5_aeos_kernel.ASTGuard",
-    # Formal Verification & Z3 -> SMTZ3FormalVerifier & RealSSAZ3ProverBridge
-    "formal_verification_z3": "lib.v7_v3_reactor_bridge.RealSSAZ3ProverBridge",
+    # Formal Verification & Z3 -> SMTZ3FormalVerifier & AlephOmega
+    "formal_verification_z3": "lib.aleph_omega_facade.AlephOmega",
     "neurosymbolic_jit_cranelift_z3": "lib.v5_aeos_kernel.SMTZ3FormalVerifier",
     "aleph_invariants_prover": "lib.v5_aeos_kernel.SMTZ3FormalVerifier",
     # Memory & Distillation -> HolographicCausalMemory
@@ -421,9 +405,9 @@ CANONICAL_ROUTING_TABLE: Dict[str, str] = {
     "aleph_memory_consolidator": "lib.v5_aeos_kernel.HolographicCausalMemory",
     "aleph_auto_distiller": "lib.v5_aeos_kernel.SkillContractManager",
     # V3 Reactors & V6 Battle Harness -> Active v7 Spinal Cord
-    "neural_code_graph": "lib.v7_v3_reactor_bridge.NeuralCodeGraphReactor",
-    "aleph_speculative_engine": "lib.v7_v3_reactor_bridge.SpeculativeBranchRaceReactor",
-    "aleph_diff_engine": "lib.v7_v3_reactor_bridge.SurgicalASTPatchReactor",
+    "neural_code_graph": "lib.aleph_omega_facade.AlephOmega",
+    "aleph_speculative_engine": "lib.aleph_omega_facade.AlephOmega",
+    "aleph_diff_engine": "lib.aleph_omega_facade.AlephOmega",
     "v6_battle_harness": "lib.v6_battle_harness.IsolatedWorktreeTransactionManager",
     "v6_flash_executor": "lib.v6_flash_executor.FlashDeterministicExecutor",
 }
@@ -603,53 +587,23 @@ class AlephOmega:
 
     @property
     def graph_reactor(self) -> Any:
-        if self._graph_reactor is None:
-            reactor_cls = NeuralCodeGraphReactor
-            if reactor_cls is None:
-                try:
-                    from lib.v7_v3_reactor_bridge import NeuralCodeGraphReactor as reactor_cls
-                except ImportError:
-                    try:
-                        from v7_v3_reactor_bridge import NeuralCodeGraphReactor as reactor_cls
-                    except ImportError:
-                        pass
-            if reactor_cls is not None:
-                self._graph_reactor = reactor_cls(
-                    workspace_root=self.root_dir,
-                    db_path=self.root_dir / "memory" / "code_graph.db",
-                )
+        if self._graph_reactor is None and NeuralCodeGraphReactor is not None:
+            self._graph_reactor = NeuralCodeGraphReactor(
+                workspace_root=self.root_dir,
+                db_path=self.root_dir / "memory" / "code_graph.db",
+            )
         return self._graph_reactor
 
     @property
     def speculative_reactor(self) -> Any:
-        if self._speculative_reactor is None:
-            reactor_cls = SpeculativeBranchRaceReactor
-            if reactor_cls is None:
-                try:
-                    from lib.v7_v3_reactor_bridge import SpeculativeBranchRaceReactor as reactor_cls
-                except ImportError:
-                    try:
-                        from v7_v3_reactor_bridge import SpeculativeBranchRaceReactor as reactor_cls
-                    except ImportError:
-                        pass
-            if reactor_cls is not None:
-                self._speculative_reactor = reactor_cls(workspace_root=self.root_dir)
+        if self._speculative_reactor is None and SpeculativeBranchRaceReactor is not None:
+            self._speculative_reactor = SpeculativeBranchRaceReactor(workspace_root=self.root_dir)
         return self._speculative_reactor
 
     @property
     def patch_reactor(self) -> Any:
-        if self._patch_reactor is None:
-            reactor_cls = SurgicalASTPatchReactor
-            if reactor_cls is None:
-                try:
-                    from lib.v7_v3_reactor_bridge import SurgicalASTPatchReactor as reactor_cls
-                except ImportError:
-                    try:
-                        from v7_v3_reactor_bridge import SurgicalASTPatchReactor as reactor_cls
-                    except ImportError:
-                        pass
-            if reactor_cls is not None:
-                self._patch_reactor = reactor_cls(workspace_root=self.root_dir)
+        if self._patch_reactor is None and SurgicalASTPatchReactor is not None:
+            self._patch_reactor = SurgicalASTPatchReactor(workspace_root=self.root_dir)
         return self._patch_reactor
 
     @property
@@ -986,26 +940,14 @@ class AlephOmega:
         )
         blast_radius: Dict[str, Any] = {}
         if target_file:
-            try:
-                reactor_cls = NeuralCodeGraphReactor
-                if reactor_cls is None:
-                    try:
-                        from lib.v7_v3_reactor_bridge import NeuralCodeGraphReactor as reactor_cls
-                    except ImportError:
-                        try:
-                            from v7_v3_reactor_bridge import NeuralCodeGraphReactor as reactor_cls
-                        except ImportError:
-                            pass
-                if reactor_cls is not None:
-                    reactor = reactor_cls(
-                        workspace_root=root_path,
-                        db_path=root_path / ".aleph_code_graph.db",
-                    )
-                    reactor.index_workspace([target_file])
-                    blast_radius = reactor.compute_blast_radius(target_file=target_file, max_hops=2)
-                else:
-                    raise RuntimeError("Reactor bridge not yet initialized")
-            except Exception:
+            if NeuralCodeGraphReactor is not None:
+                reactor = NeuralCodeGraphReactor(
+                    workspace_root=root_path,
+                    db_path=root_path / ".aleph_code_graph.db",
+                )
+                reactor.index_workspace([target_file])
+                blast_radius = reactor.compute_blast_radius(target_file=target_file, max_hops=2)
+            else:
                 # Direct AST blast radius calculation
                 direct_deps: List[str] = []
                 target_base = Path(target_file).stem
@@ -1421,8 +1363,8 @@ class AlephOmega:
                 "status": "DEPRECATED_ROUTED",
             },
             "formal_verification_z3.py": {
-                "canonical_module": "lib.v7_v3_reactor_bridge",
-                "canonical_class": "RealSSAZ3ProverBridge",
+                "canonical_module": "lib.aleph_omega_facade",
+                "canonical_class": "AlephOmega",
                 "status": "DEPRECATED_ROUTED",
             },
             "neurosymbolic_jit_cranelift_z3.py": {
@@ -1431,18 +1373,18 @@ class AlephOmega:
                 "status": "DEPRECATED_ROUTED",
             },
             "neural_code_graph.py": {
-                "canonical_module": "lib.v7_v3_reactor_bridge",
-                "canonical_class": "NeuralCodeGraphReactor",
+                "canonical_module": "lib.aleph_omega_facade",
+                "canonical_class": "AlephOmega",
                 "status": "ACTIVE_FUSED",
             },
             "aleph_speculative_engine.py": {
-                "canonical_module": "lib.v7_v3_reactor_bridge",
-                "canonical_class": "SpeculativeBranchRaceReactor",
+                "canonical_module": "lib.aleph_omega_facade",
+                "canonical_class": "AlephOmega",
                 "status": "ACTIVE_FUSED",
             },
             "aleph_diff_engine.py": {
-                "canonical_module": "lib.v7_v3_reactor_bridge",
-                "canonical_class": "SurgicalASTPatchReactor",
+                "canonical_module": "lib.aleph_omega_facade",
+                "canonical_class": "AlephOmega",
                 "status": "ACTIVE_FUSED",
             },
             "v6_battle_harness.py": {
