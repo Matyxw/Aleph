@@ -1589,7 +1589,7 @@ class AlephOmegaContinualSelfImprovementEngine:
     from contextlib import contextmanager as _cm
 
     @_cm
-    def _vault_exclusive_lock(self, timeout_sec: float = 10.0):
+    def _vault_exclusive_lock(self, timeout_sec: float = 30.0):
         import os as _os
         import time as _time
         if not self.vault_path:

@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 import re
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 DESTRUCTIVE_SHELL_PATTERNS = (
@@ -47,9 +47,56 @@ def _scan_with_aegis_shield(text: str) -> List[str]:
     return [f"AegisShield [{f.rule_id} - {f.category}]: {f.description}" for f in rep.findings]
 
 
+def _validate_python_ast_fragment(code_content: str, payload: Dict[str, Any]) -> Optional[str]:
+    """
+    Valida sintaxis AST de Python soportando tanto archivos completos como fragmentos parciales
+    indentados (`old_string`/`new_string`, métodos de clase o ramas `elif`/`else`/`except`).
+    """
+    import textwrap
+
+    file_path_str = str(payload.get("file_path", payload.get("Path", "")) or "")
+    old_str = str(payload.get("old_string", payload.get("Target", "")) or "")
+    if file_path_str and old_str:
+        fp = Path(file_path_str)
+        if fp.is_file():
+            try:
+                disk_src = fp.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                disk_src = ""
+            if old_str in disk_src:
+                reconstructed = disk_src.replace(old_str, code_content, 1)
+                try:
+                    ast.parse(reconstructed)
+                    return None
+                except SyntaxError as exc:
+                    return f"Python AST SyntaxError at line {exc.lineno}: {exc.msg}"
+
+    try:
+        ast.parse(code_content)
+        return None
+    except SyntaxError as orig_exc:
+        dedented = textwrap.dedent(code_content)
+        candidates = [dedented]
+        stripped_head = dedented.lstrip()
+        if stripped_head.startswith(("elif ", "else:")):
+            candidates.append("if True:\n    pass\n" + dedented)
+        elif stripped_head.startswith(("except", "finally:")):
+            candidates.append("try:\n    pass\n" + dedented)
+
+        for cand in candidates:
+            try:
+                ast.parse(cand)
+                return None
+            except SyntaxError:
+                continue
+        return f"Python AST SyntaxError at line {orig_exc.lineno}: {orig_exc.msg}"
+
+
 def evaluate_pre_tool_use(payload: Dict[str, Any]) -> Dict[str, Any]:
     cmd = str(payload.get("command", ""))
-    code_content = str(payload.get("code", payload.get("content", "")))
+    code_content = str(
+        payload.get("code", payload.get("content", payload.get("new_string", payload.get("Replacement", ""))))
+    )
     reasons: List[str] = []
 
     blocked = ("rm -rf /" in cmd) or ("git push --force" in cmd)
@@ -74,12 +121,12 @@ def evaluate_pre_tool_use(payload: Dict[str, Any]) -> Dict[str, Any]:
             blocked = True
             reasons.extend(aegis_code_findings)
 
-        if payload.get("language") == "python" or str(payload.get("file_path", "")).endswith(".py"):
-            try:
-                ast.parse(code_content)
-            except SyntaxError as exc:
+        file_path_str = str(payload.get("file_path", payload.get("Path", "")) or "")
+        if payload.get("language") == "python" or file_path_str.endswith(".py"):
+            ast_err = _validate_python_ast_fragment(code_content, payload)
+            if ast_err:
                 blocked = True
-                reasons.append(f"Python AST SyntaxError at line {exc.lineno}: {exc.msg}")
+                reasons.append(ast_err)
 
     return {
         "allowed": not blocked,

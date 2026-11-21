@@ -3370,6 +3370,9 @@ def cmd_seal_sync(install_dir: Optional[str] = None, skip_tests: bool = False) -
         }, indent=2, ensure_ascii=False))
         return 1
 
+    import gc
+    gc.collect()
+
     if not skip_tests:
         suite = unittest.TestLoader().discover(
             start_dir=str(core_tests),

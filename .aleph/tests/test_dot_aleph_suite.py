@@ -295,5 +295,61 @@ class TestDotAlephSovereignSuite(unittest.TestCase):
         self.assertEqual(len(full_resp["result"]["tools"]), 752)
 
 
+class TestPreToolUsePartialPythonEdits(unittest.TestCase):
+    def test_pre_tool_use_partial_indented_edit_and_real_syntax_error(self):
+        import tempfile
+
+        # 1. Edit parcial indentado válido (método dentro de clase) -> debe permitirse
+        indented_method = (
+            "    def execute_dag(self, dag_nodes, base_files=None):\n"
+            "        return self.dag_scheduler.execute_dag(dag_nodes, base_files=base_files)\n"
+        )
+        ok_method = evaluate_pre_tool_use({"code": indented_method, "file_path": "aleph_core/engine.py"})
+        self.assertTrue(ok_method["allowed"], f"Falso positivo en método indentado: {ok_method}")
+        self.assertEqual(ok_method["exit_code"], 0)
+
+        # 2. Edit parcial de rama elif indentada -> debe permitirse
+        indented_elif = (
+            "        elif tool_name == 'demo':\n"
+            "            return {'ok': True}\n"
+        )
+        ok_elif = evaluate_pre_tool_use({"code": indented_elif, "file_path": "aleph_core/engine.py"})
+        self.assertTrue(ok_elif["allowed"], f"Falso positivo en rama elif indentada: {ok_elif}")
+
+        # 3. Reconstrucción sobre archivo real en disco con old_string/new_string
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            mod_file = Path(tmp) / "sample_cls.py"
+            mod_file.write_text(
+                "class Demo:\n"
+                "    def f(self, a: int) -> int:\n"
+                "        return a + 1\n",
+                encoding="utf-8",
+            )
+            ok_disk = evaluate_pre_tool_use({
+                "file_path": str(mod_file),
+                "old_string": "        return a + 1",
+                "new_string": "        return (\n            a + 2\n        )",
+            })
+            self.assertTrue(ok_disk["allowed"], f"Falso positivo al reconstruir desde disco: {ok_disk}")
+
+            bad_disk = evaluate_pre_tool_use({
+                "file_path": str(mod_file),
+                "old_string": "        return a + 1",
+                "new_string": "        return (a +",
+            })
+            self.assertFalse(bad_disk["allowed"])
+            self.assertEqual(bad_disk["exit_code"], 2)
+
+        # 4. Edit parcial indentado con error de sintaxis real -> debe bloquearse
+        bad_indented = (
+            "    def broken_method(self, x:\n"
+            "        return x\n"
+        )
+        res_bad = evaluate_pre_tool_use({"code": bad_indented, "language": "python"})
+        self.assertFalse(res_bad["allowed"])
+        self.assertEqual(res_bad["exit_code"], 2)
+        self.assertTrue(any("SyntaxError" in r for r in res_bad["reasons"]))
+
+
 if __name__ == "__main__":
     unittest.main()

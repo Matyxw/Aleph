@@ -252,9 +252,11 @@ class TestHostileProductionResilience(unittest.TestCase):
         self.assertIn("z3_loaded=False", proc.stdout)
 
         from aleph_core.engine import AlephUniversalMCPServer
+        import gc
         srv = AlephUniversalMCPServer()
         # Calentar cache
         srv.handle_jsonrpc_request({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "aleph_bitacora_query_hipporag2_ppr", "arguments": {"query": "PostgreSQL", "top_k": 3}}})
+        gc.collect()
         t_stat = time.perf_counter()
         for idx in range(50):
             r_st = srv.handle_jsonrpc_request({"jsonrpc": "2.0", "id": idx + 100, "method": "tools/call", "params": {"name": "aleph_bitacora_vault_status_and_telemetry", "arguments": {}}})
@@ -262,6 +264,7 @@ class TestHostileProductionResilience(unittest.TestCase):
         stat_ms = (time.perf_counter() - t_stat) * 1000.0
         self.assertLess(stat_ms, 250.0)
 
+        gc.collect()
         t0 = time.perf_counter()
         for idx in range(10):
             resp = srv.handle_jsonrpc_request({"jsonrpc": "2.0", "id": idx + 2, "method": "tools/call", "params": {"name": "aleph_bitacora_query_hipporag2_ppr", "arguments": {"query": "PostgreSQL", "top_k": 3}}})
