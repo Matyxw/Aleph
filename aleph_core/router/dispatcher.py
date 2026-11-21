@@ -1,18 +1,21 @@
 """
 Enrutador de Tareas, Motor Reducer Semántico, Proof-Carrying Causal Envelopes,
-Fusión AST CAS 3-Way y Planificador Concurrente DAG libre de colisiones (v33.1.0).
-Despacha contratos inmutables, comprime trazas preservando la Tríada Diagnóstica,
-detecta conflictos Read-Write / Write-Write entre nodos concurrentes e impide condiciones de carrera.
+Fusión Políglota AST/JSON/Bloques CAS 3-Way, Localizador Causal Contrafactual
+y Sandbox Transaccional con git worktree reales libre de colisiones (v33.2.0).
 """
 from __future__ import annotations
 
 import ast
 import concurrent.futures
+import difflib
 import hashlib
 import json
 import re
+import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field, asdict
+from pathlib import Path
 from typing import Dict, Any, Callable, Optional, Set, List, Tuple
 from aleph_core.config import MAX_REDUCER_TOKENS
 
@@ -29,6 +32,7 @@ _DIAGNOSTIC_LINE_RE = re.compile(
     r"(?:Traceback \(most recent call last\):|^\s*File\s+\"|AssertionError|SyntaxError|Error:|Exception:|CRITICAL|FAILED|PASSED|@requires|@ensures|@invariant|@loc:|!err:)",
     re.IGNORECASE,
 )
+_HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def estimate_bpe_tokens(text: str) -> int:
@@ -67,7 +71,15 @@ def _extract_ast_rw_symbols(source_code: Optional[str]) -> Tuple[Set[str], Set[s
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             writes.add(node.name)
-            params = {a.arg for a in getattr(node, "args", ast.arguments()).posonlyargs + getattr(node, "args", ast.arguments()).args + getattr(node, "args", ast.arguments()).kwonlyargs} if hasattr(node, "args") else set()
+            args_obj = getattr(node, "args", None)
+            params: Set[str] = set()
+            if args_obj is not None:
+                params = {
+                    a.arg
+                    for a in list(getattr(args_obj, "posonlyargs", []))
+                    + list(getattr(args_obj, "args", []))
+                    + list(getattr(args_obj, "kwonlyargs", []))
+                }
             for sub in ast.walk(node):
                 if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Load):
                     if sub.id not in params and sub.id != node.name:
@@ -100,6 +112,28 @@ class ProofCarryingCausalEnvelope:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
+    def verify_integrity(
+        self,
+        raw_output: Any = None,
+        formal_source_code: Optional[str] = None,
+    ) -> bool:
+        """Verifica formato CAS SHA-256 y coincidencia determinista si se aporta el contenido original."""
+        if not self.task_id or not _HEX64_RE.match(self.cas_sha256):
+            return False
+        if self.bpe_tokens_compacted < 0 or self.bpe_tokens_raw < 0:
+            return False
+        if formal_source_code is not None:
+            return self.cas_sha256 == _canonical_ast_digest(formal_source_code)
+        if raw_output is not None:
+            canonical_payload = (
+                json.dumps(raw_output, ensure_ascii=False, sort_keys=True, default=str)
+                if isinstance(raw_output, (dict, list))
+                else str(raw_output)
+            )
+            expected = hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+            return self.cas_sha256 == expected
+        return True
+
 
 class JITContextEntropyCompiler:
     """Compresor léxico/diagnóstico de entropía mínima para eliminar context rot entre fases."""
@@ -107,9 +141,9 @@ class JITContextEntropyCompiler:
     @staticmethod
     def compress_diagnostic_output(raw: Any, max_chars: int = MAX_REDUCER_TOKENS * 4) -> Tuple[str, int, int, float]:
         if isinstance(raw, (dict, list)):
-            raw_text = json.dumps(raw, ensure_ascii=False, sort_keys=True)
+            raw_text = json.dumps(raw, ensure_ascii=False, sort_keys=True, default=str)
         else:
-            raw_text = str(raw)
+            raw_text = "" if raw is None else str(raw)
         raw_tokens = estimate_bpe_tokens(raw_text)
         cleaned = _ANSI_RE.sub("", raw_text)
         lines = cleaned.splitlines()
@@ -117,7 +151,6 @@ class JITContextEntropyCompiler:
         if len(lines) <= 1 and len(cleaned) <= max_chars:
             return cleaned, raw_tokens, raw_tokens, 1.0
 
-        # Colapsar repeticiones consecutivas y purgar frames vendor en trazas de error
         collapsed: List[str] = []
         last_line: Optional[str] = None
         rep_count = 0
@@ -186,7 +219,11 @@ class JITContextEntropyCompiler:
             cas_sha = _canonical_ast_digest(formal_source_code)
             contracts_dig = _extract_contracts_digest(formal_source_code)
         else:
-            canonical_payload = json.dumps(raw_output, ensure_ascii=False, sort_keys=True, default=str) if isinstance(raw_output, (dict, list)) else str(raw_output)
+            canonical_payload = (
+                json.dumps(raw_output, ensure_ascii=False, sort_keys=True, default=str)
+                if isinstance(raw_output, (dict, list))
+                else str(raw_output)
+            )
             cas_sha = hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
             contracts_dig = ""
         return ProofCarryingCausalEnvelope(
@@ -205,9 +242,11 @@ class JITContextEntropyCompiler:
 
 class SemanticCASWorktreeMerger:
     """
-    Fusión AST 3-Way con direccionamiento por contenido SHA-256 (CAS).
-    Permite integrar ediciones concurrentes sobre símbolos disjuntos de un mismo módulo Python
-    con 0% condiciones de carrera y detecta colisiones semánticas divergentes con testigo exacto.
+    Fusión Políglota 3-Way con direccionamiento por contenido SHA-256 (CAS):
+    - Python (.py): Fusión por símbolo AST top-level.
+    - JSON (.json): Fusión estructural recursiva por ruta de clave.
+    - Resto de lenguajes (.ts, .tsx, .js, .rs, .go, .md, .sh, .yaml, .yml, .toml):
+      Fusión determinista 3-way por bloques/hunks de líneas con detección de solapamientos.
     """
 
     @staticmethod
@@ -238,7 +277,16 @@ class SemanticCASWorktreeMerger:
     @classmethod
     def merge_ast_branches(cls, base_source: str, branch_sources: Dict[str, str]) -> Dict[str, Any]:
         """Realiza fusión 3-way por símbolo AST. Si dos ramas mutan distinto el mismo símbolo, aborta sin corrupción."""
-        base_imports, base_syms, base_order = cls._extract_module_parts(base_source)
+        if branch_sources is None or not branch_sources:
+            src = "" if base_source is None else base_source
+            return {
+                "merged": True,
+                "conflicts": [],
+                "merged_source": src,
+                "cas_tree_sha256": _canonical_ast_digest(src),
+                "symbols_merged": 0,
+            }
+        base_imports, base_syms, base_order = cls._extract_module_parts(base_source or "")
         merged_imports: List[str] = list(dict.fromkeys(base_imports))
         merged_syms: Dict[str, Tuple[str, str]] = dict(base_syms)
         merged_order: List[str] = list(base_order)
@@ -302,6 +350,215 @@ class SemanticCASWorktreeMerger:
             "symbols_merged": len(modified_by),
         }
 
+    @classmethod
+    def _merge_json_dicts(
+        cls,
+        base_obj: Dict[str, Any],
+        branch_objs: Dict[str, Dict[str, Any]],
+        prefix: str = "",
+    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        sentinel = object()
+        all_keys: Set[str] = set(base_obj.keys())
+        for obj in branch_objs.values():
+            all_keys |= set(obj.keys())
+
+        merged: Dict[str, Any] = {}
+        conflicts: List[Dict[str, Any]] = []
+
+        for key in sorted(all_keys):
+            key_path = f"{prefix}.{key}" if prefix else key
+            base_val = base_obj.get(key, sentinel)
+            deltas: List[Tuple[str, Any]] = []
+            for bid in sorted(branch_objs.keys()):
+                b_val = branch_objs[bid].get(key, sentinel)
+                if b_val != base_val:
+                    deltas.append((bid, b_val))
+
+            if not deltas:
+                if base_val is not sentinel:
+                    merged[key] = base_val
+                continue
+
+            distinct_encoded = {
+                json.dumps(v, sort_keys=True, ensure_ascii=False) if v is not sentinel else "__DELETED__"
+                for _, v in deltas
+            }
+            if len(distinct_encoded) == 1:
+                chosen = deltas[0][1]
+                if chosen is not sentinel:
+                    merged[key] = chosen
+                continue
+
+            if all(isinstance(v, dict) for _, v in deltas) and (isinstance(base_val, dict) or base_val is sentinel):
+                sub_base = base_val if isinstance(base_val, dict) else {}
+                sub_branches = {
+                    bid: (branch_objs[bid][key] if isinstance(branch_objs[bid].get(key), dict) else sub_base)
+                    for bid in branch_objs
+                }
+                sub_merged, sub_conflicts = cls._merge_json_dicts(sub_base, sub_branches, prefix=key_path)
+                if sub_conflicts:
+                    conflicts.extend(sub_conflicts)
+                else:
+                    merged[key] = sub_merged
+            else:
+                conflicts.append({
+                    "json_path": key_path,
+                    "branches": [bid for bid, _ in deltas],
+                    "reason": "JSON_VALUE_COLLISION",
+                })
+        return merged, conflicts
+
+    @classmethod
+    def merge_json_branches(cls, base_source: str, branch_sources: Dict[str, str]) -> Dict[str, Any]:
+        """Fusión estructural 3-way para archivos JSON."""
+        if not branch_sources:
+            src = "{}" if not (base_source or "").strip() else base_source
+            return {
+                "merged": True,
+                "conflicts": [],
+                "merged_source": src,
+                "cas_tree_sha256": hashlib.sha256(src.encode("utf-8")).hexdigest(),
+            }
+        try:
+            base_obj = json.loads(base_source) if (base_source or "").strip() else {}
+        except json.JSONDecodeError as exc:
+            return {
+                "merged": False,
+                "conflicts": [{"branch": "base", "reason": f"JSONDecodeError:{exc.msg}"}],
+                "merged_source": "",
+                "cas_tree_sha256": "",
+            }
+        parsed_branches: Dict[str, Dict[str, Any]] = {}
+        for bid, b_src in sorted(branch_sources.items()):
+            try:
+                loaded = json.loads(b_src)
+            except json.JSONDecodeError as exc:
+                return {
+                    "merged": False,
+                    "conflicts": [{"branch": bid, "reason": f"JSONDecodeError:{exc.msg}"}],
+                    "merged_source": "",
+                    "cas_tree_sha256": "",
+                }
+            if not isinstance(loaded, dict) or not isinstance(base_obj, dict):
+                return cls.merge_line_blocks_3way(base_source, branch_sources)
+            parsed_branches[bid] = loaded
+
+        merged_dict, conflicts = cls._merge_json_dicts(base_obj, parsed_branches)
+        if conflicts:
+            return {
+                "merged": False,
+                "conflicts": conflicts,
+                "merged_source": "",
+                "cas_tree_sha256": "",
+            }
+        merged_source = json.dumps(merged_dict, indent=2, ensure_ascii=False) + "\n"
+        return {
+            "merged": True,
+            "conflicts": [],
+            "merged_source": merged_source,
+            "cas_tree_sha256": hashlib.sha256(merged_source.encode("utf-8")).hexdigest(),
+        }
+
+    @staticmethod
+    def _hunks_overlap(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
+        if a_start == a_end and b_start == b_end:
+            return a_start == b_start
+        if a_start == a_end:
+            return b_start < a_start < b_end
+        if b_start == b_end:
+            return a_start < b_start < a_end
+        return a_start < b_end and b_start < a_end
+
+    @classmethod
+    def merge_line_blocks_3way(cls, base_source: str, branch_sources: Dict[str, str]) -> Dict[str, Any]:
+        """Fusión 3-way determinista por bloques de líneas para archivos políglotas no-Python."""
+        base_text = "" if base_source is None else base_source
+        if not branch_sources:
+            return {
+                "merged": True,
+                "conflicts": [],
+                "merged_source": base_text,
+                "cas_tree_sha256": hashlib.sha256(base_text.encode("utf-8")).hexdigest(),
+            }
+
+        base_lines = base_text.splitlines(keepends=True)
+        # (i1, i2, replacement_tuple, branch_id)
+        all_edits: List[Tuple[int, int, Tuple[str, ...], str]] = []
+        for bid in sorted(branch_sources.keys()):
+            b_text = "" if branch_sources[bid] is None else branch_sources[bid]
+            b_lines = b_text.splitlines(keepends=True)
+            sm = difflib.SequenceMatcher(None, base_lines, b_lines, autojunk=False)
+            for tag, i1, i2, j1, j2 in sm.get_opcodes():
+                if tag != "equal":
+                    all_edits.append((i1, i2, tuple(b_lines[j1:j2]), bid))
+
+        if not all_edits:
+            return {
+                "merged": True,
+                "conflicts": [],
+                "merged_source": base_text,
+                "cas_tree_sha256": hashlib.sha256(base_text.encode("utf-8")).hexdigest(),
+            }
+
+        unique_edits: Dict[Tuple[int, int, Tuple[str, ...]], List[str]] = {}
+        for i1, i2, rep, bid in all_edits:
+            unique_edits.setdefault((i1, i2, rep), []).append(bid)
+
+        sorted_ops = sorted(unique_edits.keys(), key=lambda x: (x[0], x[1]))
+        conflicts: List[Dict[str, Any]] = []
+        for idx, op_a in enumerate(sorted_ops):
+            a_i1, a_i2, a_rep = op_a
+            for op_b in sorted_ops[idx + 1:]:
+                b_i1, b_i2, b_rep = op_b
+                if cls._hunks_overlap(a_i1, a_i2, b_i1, b_i2):
+                    conflicts.append({
+                        "line_range": [min(a_i1, b_i1) + 1, max(a_i2, b_i2) + 1],
+                        "branches": sorted(set(unique_edits[op_a] + unique_edits[op_b])),
+                        "reason": "OVERLAPPING_HUNK_COLLISION",
+                    })
+
+        if conflicts:
+            return {
+                "merged": False,
+                "conflicts": conflicts,
+                "merged_source": "",
+                "cas_tree_sha256": "",
+            }
+
+        out_lines: List[str] = []
+        cursor = 0
+        for i1, i2, rep, in sorted_ops:
+            if cursor < i1:
+                out_lines.extend(base_lines[cursor:i1])
+            out_lines.extend(rep)
+            cursor = i2
+        if cursor < len(base_lines):
+            out_lines.extend(base_lines[cursor:])
+
+        merged_source = "".join(out_lines)
+        return {
+            "merged": True,
+            "conflicts": [],
+            "merged_source": merged_source,
+            "cas_tree_sha256": hashlib.sha256(merged_source.encode("utf-8")).hexdigest(),
+            "hunks_merged": len(sorted_ops),
+        }
+
+    @classmethod
+    def merge_polyglot_branches(
+        cls,
+        file_path: str,
+        base_source: str,
+        branch_sources: Dict[str, str],
+    ) -> Dict[str, Any]:
+        """Despacha estrategia de fusión determinista 3-way según extensión del archivo."""
+        ext = Path(file_path).suffix.lower() if file_path else ""
+        if ext == ".py":
+            return cls.merge_ast_branches(base_source, branch_sources)
+        if ext == ".json":
+            return cls.merge_json_branches(base_source, branch_sources)
+        return cls.merge_line_blocks_3way(base_source, branch_sources)
+
 
 @dataclass
 class TaskContract:
@@ -334,10 +591,10 @@ class TaskDispatcher:
 
     def dispatch(self, contract: TaskContract) -> TaskExecutionResult:
         if contract.task_type not in self._handlers:
-            err_msg = f"Handler no registrado para task_type '{contract.task_type}'"
+            err = f"Capacidad no registrada: {contract.task_type}"
             env = JITContextEntropyCompiler.build_envelope(
                 task_id=contract.task_id,
-                raw_output={"error": err_msg},
+                raw_output=f"!err:{err}",
                 epistemic_status="REFUTED",
             )
             return TaskExecutionResult(
@@ -346,7 +603,7 @@ class TaskDispatcher:
                 raw_output=None,
                 compact_output="",
                 execution_time_ms=0.0,
-                error=err_msg,
+                error=err,
                 envelope=env,
             )
         handler = self._handlers[contract.task_type]
@@ -422,15 +679,24 @@ class DAGScheduleResult:
     all_success: bool
     collisions_prevented_count: int = 0
     envelopes: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    compute_allocation: Dict[str, Any] = field(default_factory=dict)
+    fault_localization: Dict[str, Any] = field(default_factory=dict)
+    worktree_transaction: Dict[str, Any] = field(default_factory=dict)
 
 
 class DynamicDAGScheduler:
-    """Planificador topológico concurrente con aislamiento de colisiones Read/Write y sobres PCCHE."""
+    """
+    Planificador topológico concurrente con aislamiento de colisiones Read/Write,
+    asignación cognitiva asimétrica, sobres PCCHE, fusión AST/políglota CAS y localización causal contrafactual.
+    """
+
     def __init__(self, max_workers: int = 8):
         self.max_workers = max_workers
 
     @staticmethod
     def _effective_rw_sets(node: DAGTaskNode) -> Tuple[Set[str], Set[str]]:
+        if node is None:
+            return set(), set()
         reads = set(node.read_symbols)
         writes = set(node.write_symbols)
         if node.formal_source_code and not (reads or writes):
@@ -441,6 +707,8 @@ class DynamicDAGScheduler:
 
     @classmethod
     def compute_execution_waves_with_stats(cls, nodes: Dict[str, DAGTaskNode]) -> Tuple[List[List[str]], int]:
+        if nodes is None or not nodes:
+            return [], 0
         in_degree: Dict[str, int] = {task_id: len(node.dependencies) for task_id, node in nodes.items()}
         for task_id, node in nodes.items():
             for dep in node.dependencies:
@@ -496,15 +764,43 @@ class DynamicDAGScheduler:
     def execute_dag(
         self,
         nodes: Dict[str, DAGTaskNode],
-        engine_execute_fn: Callable[..., Dict[str, Any]]
+        engine_execute_fn: Callable[..., Dict[str, Any]],
+        base_files: Optional[Dict[str, str]] = None,
     ) -> DAGScheduleResult:
+        from aleph_core.router.cost_router import SovereignCostRouter
+
         t0 = time.perf_counter_ns()
+        if nodes is None or not nodes:
+            return DAGScheduleResult(
+                total_tasks=0,
+                waves_executed=0,
+                wall_clock_duration_ms=0.0,
+                sequential_equivalent_duration_ms=0.0,
+                speedup_ratio=1.0,
+                results={},
+                all_success=True,
+                collisions_prevented_count=0,
+                envelopes={},
+                compute_allocation=SovereignCostRouter.allocate_dag_compute({}),
+                fault_localization=CounterfactualFaultLocalizer.localize_dag_faults({}, None),
+                worktree_transaction={},
+            )
+
+        node_prompts: Dict[str, str] = {}
+        for tid, n in nodes.items():
+            raw_p = n.contract.input_payload.get("prompt") or n.contract.input_payload.get("raw_text") or json.dumps(
+                n.contract.input_payload, ensure_ascii=False, sort_keys=True, default=str
+            )
+            node_prompts[tid] = f"{raw_p}\n{n.formal_source_code or ''}".strip()
+        compute_alloc = SovereignCostRouter.allocate_dag_compute(node_prompts)
+
         waves, collisions_prevented = self.compute_execution_waves_with_stats(nodes)
         results: Dict[str, Any] = {}
         envelopes: Dict[str, Dict[str, Any]] = {}
         all_success = True
         seq_ms_sum = 0.0
         vector_clock = {tid: 0 for tid in nodes}
+        staged_patches: List[Tuple[str, str, str]] = []
 
         def _prepare_payload(node: DAGTaskNode) -> Dict[str, Any]:
             if node.inject_parent_envelopes and node.dependencies:
@@ -532,6 +828,12 @@ class DynamicDAGScheduler:
                 vector_clock=dict(vector_clock),
             )
             envelopes[tid] = env.to_dict()
+
+            patch_map = node.contract.input_payload.get("file_patches")
+            if res.get("status") == "SUCCESS" and isinstance(patch_map, dict):
+                for fp, src in patch_map.items():
+                    if isinstance(src, str):
+                        staged_patches.append((tid, str(fp), src))
 
         for wave in waves:
             wave_nodes = [nodes[task_id] for task_id in wave]
@@ -565,9 +867,27 @@ class DynamicDAGScheduler:
                         res = fut.result()
                         _record_result(n, res)
 
+        worktree_tx_report: Dict[str, Any] = {}
+        if base_files is not None or staged_patches:
+            tx = EphemeralCASWorktreeTransaction(base_files or {})
+            stage_errors: List[Dict[str, Any]] = []
+            for tid, fp, src in staged_patches:
+                st = tx.stage_agent_patch(tid, fp, src)
+                if not st.get("staged"):
+                    stage_errors.append({"task_id": tid, "file_path": fp, "reason": st.get("reason")})
+            if stage_errors:
+                worktree_tx_report = {
+                    "committed": False,
+                    "rolled_back": True,
+                    "reason": "STAGE_REJECTED",
+                    "conflicts": stage_errors,
+                }
+            else:
+                worktree_tx_report = tx.commit_all()
+
         duration_ms = (time.perf_counter_ns() - t0) / 1_000_000.0
         speedup = round(seq_ms_sum / max(duration_ms, 0.001), 2)
-        return DAGScheduleResult(
+        sched_res = DAGScheduleResult(
             total_tasks=len(nodes),
             waves_executed=len(waves),
             wall_clock_duration_ms=round(duration_ms, 3),
@@ -577,8 +897,11 @@ class DynamicDAGScheduler:
             all_success=all_success,
             collisions_prevented_count=collisions_prevented,
             envelopes=envelopes,
+            compute_allocation=compute_alloc,
+            worktree_transaction=worktree_tx_report,
         )
-
+        sched_res.fault_localization = CounterfactualFaultLocalizer.localize_dag_faults(nodes, sched_res)
+        return sched_res
 
 
 class CounterfactualFaultLocalizer:
@@ -589,8 +912,8 @@ class CounterfactualFaultLocalizer:
 
     @staticmethod
     def localize_dag_faults(
-        nodes: Dict[str, DAGTaskNode],
-        schedule_result: DAGScheduleResult,
+        nodes: Optional[Dict[str, DAGTaskNode]],
+        schedule_result: Optional[DAGScheduleResult],
     ) -> Dict[str, Any]:
         if nodes is None or schedule_result is None or not nodes:
             return {
@@ -664,8 +987,8 @@ class CounterfactualFaultLocalizer:
 
 class EphemeralCASWorktreeTransaction:
     """
-    Sandbox transaccional AST-CAS en memoria para ediciones paralelas sin colisiones.
-    Aplica AegisShield, parseo AST, fusión 3-way determinista y rollback atómico ante conflicto o fallo.
+    Sandbox transaccional políglota AST/JSON/Bloques-CAS para ediciones paralelas sin colisiones,
+    con soporte de escritura atómica en disco, recuperación ante fallos parciales y git worktrees reales.
     """
 
     def __init__(self, base_files: Optional[Dict[str, str]] = None):
@@ -690,16 +1013,22 @@ class EphemeralCASWorktreeTransaction:
                 "reason": f"AEGIS_BLOCKED:{sec.findings[0].rule_id if sec.findings else 'UNSAFE'}",
             }
 
-        if file_path.endswith(".py"):
+        ext = Path(file_path).suffix.lower()
+        if ext == ".py":
             try:
                 ast.parse(patched_source)
             except SyntaxError as exc:
                 return {"staged": False, "reason": f"SYNTAX_ERROR:{exc.msg}"}
+        elif ext == ".json":
+            try:
+                json.loads(patched_source)
+            except json.JSONDecodeError as exc:
+                return {"staged": False, "reason": f"JSON_ERROR:{exc.msg}"}
 
         self._staged.setdefault(file_path, {})[agent_id] = patched_source
         digest = (
             _canonical_ast_digest(patched_source)
-            if file_path.endswith(".py")
+            if ext == ".py"
             else hashlib.sha256(patched_source.encode("utf-8")).hexdigest()
         )
         return {
@@ -719,18 +1048,11 @@ class EphemeralCASWorktreeTransaction:
             if len(branches) == 1:
                 candidate_files[file_path] = next(iter(branches.values()))
                 continue
-            if file_path.endswith(".py"):
-                m_res = SemanticCASWorktreeMerger.merge_ast_branches(base_src, branches)
-                if not m_res.get("merged"):
-                    conflicts.extend(m_res.get("conflicts", [{"file": file_path, "reason": "MERGE_CONFLICT"}]))
-                else:
-                    candidate_files[file_path] = str(m_res.get("merged_source", ""))
+            m_res = SemanticCASWorktreeMerger.merge_polyglot_branches(file_path, base_src, branches)
+            if not m_res.get("merged"):
+                conflicts.extend(m_res.get("conflicts", [{"file": file_path, "reason": "MERGE_CONFLICT"}]))
             else:
-                distinct = sorted(set(branches.values()))
-                if len(distinct) > 1:
-                    conflicts.append({"file": file_path, "branches": sorted(branches.keys()), "reason": "TEXT_COLLISION"})
-                elif distinct:
-                    candidate_files[file_path] = distinct[0]
+                candidate_files[file_path] = str(m_res.get("merged_source", ""))
 
         if conflicts:
             self._staged.clear()
@@ -772,3 +1094,162 @@ class EphemeralCASWorktreeTransaction:
             "conflicts": [],
             "files": dict(self._base_files),
         }
+
+    def commit_to_disk(
+        self,
+        workspace_dir: Path,
+        verifier_fn: Optional[Callable[[Dict[str, str]], bool]] = None,
+        simulate_crash_after_n_files: int = 0,
+    ) -> Dict[str, Any]:
+        """Persiste la transacción en disco atómicamente con rollback completo ante fallo o caída parcial."""
+        from aleph_core.state.store import StateStore
+
+        if workspace_dir is None:
+            return {"committed": False, "rolled_back": True, "reason": "INVALID_WORKSPACE", "conflicts": []}
+
+        ws_path = Path(workspace_dir)
+        prev_base = dict(self._base_files)
+        target_rels = sorted(set(self._base_files.keys()) | set(self._staged.keys()))
+        disk_before_exists: Dict[str, bool] = {}
+        disk_before_text: Dict[str, str] = {}
+        for rel in target_rels:
+            fp = ws_path / rel
+            disk_before_exists[rel] = fp.exists()
+            if fp.exists():
+                disk_before_text[rel] = fp.read_text(encoding="utf-8", errors="replace")
+
+        res = self.commit_all(verifier_fn=verifier_fn)
+        if not res.get("committed"):
+            return res
+
+        committed_files: Dict[str, str] = res.get("files", {})
+        written_rels: List[str] = []
+        try:
+            for idx, (rel, content) in enumerate(sorted(committed_files.items()), 1):
+                StateStore.atomic_write_file(ws_path / rel, content)
+                written_rels.append(rel)
+                if simulate_crash_after_n_files > 0 and idx >= simulate_crash_after_n_files:
+                    raise RuntimeError(f"SIMULATED_MID_TX_CRASH_AT_FILE_{idx}")
+        except Exception as exc:
+            for rel in written_rels:
+                fp = ws_path / rel
+                if disk_before_exists.get(rel, False):
+                    StateStore.atomic_write_file(fp, disk_before_text.get(rel, ""))
+                elif fp.exists():
+                    fp.unlink()
+            self._base_files = prev_base
+            return {
+                "committed": False,
+                "rolled_back": True,
+                "reason": f"DISK_TX_ABORTED:{exc}",
+                "conflicts": [{"reason": str(exc)}],
+                "before_cas_root": res.get("before_cas_root", ""),
+                "after_cas_root": self.cas_root(self._base_files),
+                "files": dict(self._base_files),
+            }
+
+        res["written_to_disk"] = written_rels
+        return res
+
+    @classmethod
+    def execute_git_worktree_parallel_tx(
+        cls,
+        repo_dir: Path,
+        branch_patches: Dict[str, Dict[str, str]],
+        max_workers: int = 4,
+        verifier_fn: Optional[Callable[[Dict[str, str]], bool]] = None,
+        simulate_crash_after_n_files: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        Ejecuta workers concurrentes reales sobre `git worktree` temporales físicos en disco,
+        fusiona los resultados mediante SemanticCASWorktreeMerger y persiste vía `commit_to_disk`.
+        """
+        if repo_dir is None or branch_patches is None or not branch_patches:
+            return {"committed": False, "rolled_back": True, "reason": "INVALID_GIT_WORKTREE_INPUT", "conflicts": []}
+
+        repo_path = Path(repo_dir)
+        all_rels = sorted({rel for files in branch_patches.values() for rel in files.keys()})
+        base_files: Dict[str, str] = {}
+        for rel in all_rels:
+            fp = repo_path / rel
+            base_files[rel] = fp.read_text(encoding="utf-8", errors="replace") if fp.exists() else ""
+
+        tx = cls(base_files=base_files)
+        disk_results: Dict[str, Dict[str, str]] = {}
+        stage_rejections: List[Dict[str, Any]] = []
+
+        with tempfile.TemporaryDirectory(prefix="awt_") as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            created_wts: List[Path] = []
+
+            def _run_worker(agent_id: str, patches: Dict[str, str]) -> Tuple[str, Dict[str, str]]:
+                safe_id = re.sub(r"[^A-Za-z0-9_-]+", "_", agent_id)
+                wt_dir = tmp_path / safe_id
+                subprocess.run(
+                    ["git", "-C", str(repo_path), "worktree", "add", "--detach", str(wt_dir), "HEAD"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                created_wts.append(wt_dir)
+                from aleph_core.state.store import StateStore
+                observed: Dict[str, str] = {}
+                for rel, new_src in patches.items():
+                    target = wt_dir / rel
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    StateStore.atomic_write_file(target, new_src)
+                    observed[rel] = target.read_text(encoding="utf-8", errors="replace")
+                return agent_id, observed
+
+            try:
+                workers_n = min(max(1, max_workers), len(branch_patches))
+                with concurrent.futures.ThreadPoolExecutor(max_workers=workers_n) as pool:
+                    futs = {
+                        pool.submit(_run_worker, aid, patches): aid
+                        for aid, patches in sorted(branch_patches.items())
+                    }
+                    for fut in concurrent.futures.as_completed(futs):
+                        aid, observed = fut.result()
+                        disk_results[aid] = observed
+            finally:
+                for wt_dir in created_wts:
+                    subprocess.run(
+                        ["git", "-C", str(repo_path), "worktree", "remove", "--force", str(wt_dir)],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                subprocess.run(
+                    ["git", "-C", str(repo_path), "worktree", "prune"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+
+        for aid, observed in sorted(disk_results.items()):
+            for rel, content in sorted(observed.items()):
+                st = tx.stage_agent_patch(aid, rel, content)
+                if not st.get("staged"):
+                    stage_rejections.append({"agent_id": aid, "file_path": rel, "reason": st.get("reason")})
+
+        if stage_rejections:
+            before_root = tx.cas_root(base_files)
+            return {
+                "committed": False,
+                "rolled_back": True,
+                "reason": "STAGE_REJECTED",
+                "conflicts": stage_rejections,
+                "before_cas_root": before_root,
+                "after_cas_root": before_root,
+                "worktrees_executed": len(branch_patches),
+                "files": base_files,
+            }
+
+        out = tx.commit_to_disk(
+            repo_path,
+            verifier_fn=verifier_fn,
+            simulate_crash_after_n_files=simulate_crash_after_n_files,
+        )
+        out["worktrees_executed"] = len(branch_patches)
+        out["workers_used"] = min(max(1, max_workers), len(branch_patches))
+        return out

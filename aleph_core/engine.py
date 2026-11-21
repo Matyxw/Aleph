@@ -456,9 +456,9 @@ class AlephEngine:
             "working_memory": StateStore.restore_checkpoint_memory(chk)
         }
 
-    def execute_dag(self, dag_nodes: Dict[str, DAGTaskNode]) -> DAGScheduleResult:
+    def execute_dag(self, dag_nodes: Dict[str, DAGTaskNode], base_files: Optional[Dict[str, str]] = None) -> DAGScheduleResult:
         """Ejecuta un grafo acíclico dirigido de tareas en paralelo por oleadas topológicas."""
-        return self.dag_scheduler.execute_dag(dag_nodes, engine_execute_fn=self.execute_and_verify)
+        return self.dag_scheduler.execute_dag(dag_nodes, engine_execute_fn=self.execute_and_verify, base_files=base_files)
 
     def apply_verified_semantic_patch(
         self,
@@ -9415,6 +9415,33 @@ class AlephUniversalMCPServer:
             return rep.to_dict()
 
         elif tool_name == "aleph_apply_semantic_patch":
+            concurrent_branches = args.get("concurrent_branches")
+            if isinstance(concurrent_branches, dict) and concurrent_branches:
+                from .router.dispatcher import EphemeralCASWorktreeTransaction
+                rel_name = str(args.get("target_file_path") or "module.py")
+                base_src = str(args.get("original_source", ""))
+                tx = EphemeralCASWorktreeTransaction({rel_name: base_src})
+                stage_errs = []
+                for branch_id, b_src in sorted(concurrent_branches.items()):
+                    st = tx.stage_agent_patch(str(branch_id), rel_name, str(b_src))
+                    if not st.get("staged"):
+                        stage_errs.append({"branch": branch_id, "reason": st.get("reason")})
+                if stage_errs:
+                    return {
+                        "success": False,
+                        "rolled_back": True,
+                        "conflicts": stage_errs,
+                        "error": stage_errs[0].get("reason", "STAGE_REJECTED"),
+                    }
+                c_res = tx.commit_all()
+                return {
+                    "success": bool(c_res.get("committed")),
+                    "rolled_back": bool(c_res.get("rolled_back")),
+                    "conflicts": c_res.get("conflicts", []),
+                    "patched_code": c_res.get("files", {}).get(rel_name, ""),
+                    "before_cas_root": c_res.get("before_cas_root", ""),
+                    "after_cas_root": c_res.get("after_cas_root", ""),
+                }
             target_path = Path(args["target_file_path"]) if args.get("target_file_path") else None
             res = self.engine.apply_verified_semantic_patch(
                 original_source=args["original_source"],

@@ -10,12 +10,13 @@ Comandos soportados:
   python3 aleph_cli.py git-gate [dir] -> Compuerta Pre-Commit Soberana de Integridad de Workspace
 """
 import ast
+import hashlib
 import json
 import os
 import sys
 from dataclasses import asdict
 import unittest
-from typing import Optional
+from typing import Dict, Optional
 from pathlib import Path
 
 from aleph_core.engine import AlephEngine, AlephUniversalMCPServer
@@ -3302,8 +3303,14 @@ def cmd_cleanliness(target_dir: str = ".") -> int:
 
 
 def cmd_ab_eval(argv_list: Optional[list] = None) -> int:
-    """Delega al arnés experimental A/B ab_eval/ab_harness.py o ejecuta el benchmark SOTA integrado."""
+    """Delega al arnés experimental A/B, al benchmark SOTA integrado o al modo hostil real en disco."""
     args = argv_list if argv_list is not None else sys.argv[2:]
+    if args in (["--mode", "hostile"], ["--hostile"]):
+        from ab_eval.real_world_stress import run_real_world_hostile_benchmark
+
+        rep = run_real_world_hostile_benchmark()
+        print(json.dumps(rep, indent=2, ensure_ascii=False))
+        return 0 if rep.get("all_invariants_passed") else 1
     if not args or args == ["--builtin-sota"]:
         from ab_eval.ab_harness import run_builtin_sota_benchmark
 
@@ -3316,6 +3323,164 @@ def cmd_ab_eval(argv_list: Optional[list] = None) -> int:
     return int(ab_main(args))
 
 
+def cmd_seal_sync(install_dir: Optional[str] = None, skip_tests: bool = False) -> int:
+    """
+    Comando atómico único de verificación, resello criptográfico, sincronización con INSTALL_DIR
+    y empaquetado limpio en un único ZIP canónico (Zero Stale State).
+    """
+    import compileall
+    import datetime
+    import shutil
+    import unittest
+    import zipfile
+    from aleph_core.state.store import StateStore
+    from aleph_core.verification import GitSovereignGate
+
+    repo_root = Path(__file__).resolve().parent
+    inst_root = Path(install_dir) if install_dir else (Path.home() / "el-aleph-sovereign")
+    dot_aleph = repo_root / ".aleph"
+    dot_tests = dot_aleph / "tests"
+    core_tests = repo_root / "aleph_core" / "tests"
+    for p_dir in (repo_root, dot_aleph, dot_aleph / "lib", dot_aleph / "v4_engine", dot_aleph / "scripts", dot_aleph / "hooks", dot_tests, core_tests):
+        if str(p_dir) not in sys.path:
+            sys.path.insert(0, str(p_dir))
+
+    for target_root in (repo_root, inst_root):
+        if target_root.exists():
+            for cache_dir in list(target_root.rglob("__pycache__")) + list(target_root.rglob(".pytest_cache")):
+                if cache_dir.is_dir():
+                    shutil.rmtree(cache_dir, ignore_errors=True)
+
+    if not compileall.compile_dir(str(repo_root / "aleph_core"), quiet=2, force=False):
+        return 1
+    if not compileall.compile_dir(str(dot_aleph), quiet=2, force=False):
+        return 1
+
+    files_map: Dict[str, str] = {}
+    for ext in ("*.py", "*.rs", "*.ts", "*.tsx", "*.vba", "*.bas"):
+        for f in repo_root.rglob(ext):
+            if any(p in f.parts for p in ("__pycache__", ".git", "node_modules", "target")):
+                continue
+            files_map[str(f.relative_to(repo_root))] = f.read_text(encoding="utf-8", errors="ignore")
+    gate_report = GitSovereignGate.audit_files_dict(files_map)
+    if not gate_report.safe_to_commit:
+        print(json.dumps({
+            "status": "ABORTED_BY_GIT_GATE",
+            "blocking_defects": gate_report.blocking_defects,
+        }, indent=2, ensure_ascii=False))
+        return 1
+
+    if not skip_tests:
+        suite = unittest.TestLoader().discover(
+            start_dir=str(core_tests),
+            top_level_dir=str(core_tests),
+        )
+        runner = unittest.TextTestRunner(verbosity=0)
+        t_res = runner.run(suite)
+        if not t_res.wasSuccessful():
+            return 1
+
+    core_count = unittest.TestLoader().discover(
+        start_dir=str(core_tests),
+        top_level_dir=str(core_tests),
+    ).countTestCases()
+    dot_count = unittest.TestLoader().discover(
+        start_dir=str(dot_tests),
+        top_level_dir=str(dot_tests),
+    ).countTestCases() if dot_tests.exists() else 0
+    total_tests = core_count + dot_count
+
+    manifest_path = repo_root / ".aleph" / "UNIFIED_GOVERNANCE_MANIFEST.json"
+    if manifest_path.exists():
+        gov = json.loads(manifest_path.read_text(encoding="utf-8"))
+        gov["total_unit_tests_count"] = total_tests
+        gov["core_unit_tests_count"] = core_count
+        gov["dot_aleph_unit_tests_count"] = dot_count
+        StateStore.atomic_write_file(manifest_path, json.dumps(gov, indent=2, ensure_ascii=False) + "\n")
+
+    excluded_parts = {".git", "__pycache__", ".pytest_cache"}
+    excluded_rels = {".aleph-cert.json", ".github/workflows/ci.yml"}
+    disk_hashes: Dict[str, str] = {}
+    for p in sorted(repo_root.rglob("*")):
+        if p.is_file() and not (set(p.parts) & excluded_parts):
+            rel = p.relative_to(repo_root).as_posix()
+            if rel not in excluded_rels:
+                disk_hashes[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
+
+    cert_path = repo_root / ".aleph-cert.json"
+    cert = json.loads(cert_path.read_text(encoding="utf-8"))
+    cert["timestamp_utc"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cert["unit_tests_total"] = total_tests
+    cert["core_tests_total"] = core_count
+    cert["dot_aleph_tests_total"] = dot_count
+    cert["file_count"] = len(disk_hashes)
+    cert["python_files_audited"] = sum(1 for k in disk_hashes if k.endswith(".py"))
+    cert["file_hashes_sha256"] = disk_hashes
+    tree_blob = "\n".join(f"{k}:{v}" for k, v in sorted(disk_hashes.items())).encode("utf-8")
+    cert["tree_sha256"] = hashlib.sha256(tree_blob).hexdigest()
+    cert_payload = json.dumps(cert, indent=2, ensure_ascii=False) + "\n"
+    StateStore.atomic_write_file(cert_path, cert_payload)
+
+    if inst_root != repo_root:
+        inst_root.mkdir(parents=True, exist_ok=True)
+        for rel in sorted(disk_hashes.keys()):
+            src_f = repo_root / rel
+            dst_f = inst_root / rel
+            dst_f.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_f, dst_f)
+        StateStore.atomic_write_file(inst_root / ".aleph-cert.json", cert_payload)
+        for p in list(inst_root.rglob("*")):
+            if p.is_file() and not (set(p.parts) & excluded_parts):
+                rel = p.relative_to(inst_root).as_posix()
+                if rel not in disk_hashes and rel not in excluded_rels:
+                    p.unlink()
+
+    inst_hashes: Dict[str, str] = {}
+    for p in sorted(inst_root.rglob("*")):
+        if p.is_file() and not (set(p.parts) & excluded_parts):
+            rel = p.relative_to(inst_root).as_posix()
+            if rel not in excluded_rels:
+                inst_hashes[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
+    parity_diffs = [k for k in sorted(set(disk_hashes) | set(inst_hashes)) if disk_hashes.get(k) != inst_hashes.get(k)]
+    if parity_diffs:
+        print(json.dumps({"status": "PARITY_ERROR", "parity_diffs": parity_diffs}, indent=2))
+        return 1
+
+    downloads_dir = repo_root.parent
+    canonical_zip = downloads_dir / f"{repo_root.name}.zip"
+    for anomaly in list(downloads_dir.glob(f"{repo_root.name}*SOTA*.zip")) + list(downloads_dir.glob(f"{repo_root.name}*.zip.zip")):
+        if anomaly != canonical_zip and anomaly.is_file():
+            anomaly.unlink()
+
+    zip_count = 0
+    with zipfile.ZipFile(canonical_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for p in sorted(repo_root.rglob("*")):
+            if p.is_file() and not (set(p.parts) & excluded_parts):
+                zf.write(p, arcname=p.relative_to(repo_root).as_posix())
+                zip_count += 1
+
+    for target_root in (repo_root, inst_root):
+        for cache_dir in list(target_root.rglob("__pycache__")) + list(target_root.rglob(".pytest_cache")):
+            if cache_dir.is_dir():
+                shutil.rmtree(cache_dir, ignore_errors=True)
+
+    print(json.dumps({
+        "status": "SEAL_SYNC_OK",
+        "file_count": len(disk_hashes),
+        "python_files_audited": cert["python_files_audited"],
+        "formal_proofs_passed": gate_report.formal_proofs_passed,
+        "core_tests_total": core_count,
+        "dot_aleph_tests_total": dot_count,
+        "unit_tests_total": total_tests,
+        "tree_sha256": cert["tree_sha256"],
+        "parity_diffs": parity_diffs,
+        "canonical_zip": str(canonical_zip),
+        "zip_entries": zip_count,
+        "zip_bytes": canonical_zip.stat().st_size,
+    }, indent=2, ensure_ascii=False))
+    return 0
+
+
 def cmd_mcp_client() -> int:
     """Delega al cliente MCP universal aleph_mcp_client.py."""
     import aleph_mcp_client
@@ -3326,7 +3491,9 @@ def cmd_mcp_client() -> int:
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "benchmark"
-    if cmd == "bitacora-status":
+    if cmd == "seal-sync":
+        sys.exit(cmd_seal_sync(skip_tests=("--skip-tests" in sys.argv[2:])))
+    elif cmd == "bitacora-status":
         sys.exit(cmd_bitacora_status())
     elif cmd == "bitacora-search":
         q = sys.argv[2] if len(sys.argv) > 2 else "verificación formal SMT"

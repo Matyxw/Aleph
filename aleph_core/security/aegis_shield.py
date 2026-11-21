@@ -192,9 +192,10 @@ class AegisShield:
                     b64_tokens.append(tok)
 
             for tok in b64_tokens:
-                if tok in seen_candidates:
+                key_b = f'b64:{tok}'
+                if key_b in seen_candidates:
                     continue
-                seen_candidates.add(tok)
+                seen_candidates.add(key_b)
                 padded = tok + ("=" * ((4 - len(tok) % 4) % 4))
                 raw = None
                 try:
@@ -214,9 +215,10 @@ class AegisShield:
             # Secuencias hexadecimales continuas (>=20 chars)
             for m in _HEX_CANDIDATE_RE.finditer(current):
                 hex_body = m.group(1)
-                if hex_body in seen_candidates:
+                key_h = f'hex:{hex_body}'
+                if key_h in seen_candidates:
                     continue
-                seen_candidates.add(hex_body)
+                seen_candidates.add(key_h)
                 try:
                     raw = bytes.fromhex(hex_body)
                 except ValueError:
@@ -230,9 +232,10 @@ class AegisShield:
             # Escapes \xNN
             for m in _HEX_ESCAPE_RE.finditer(current):
                 esc = m.group(0)
-                if esc in seen_candidates:
+                key_e = f'esc:{esc}'
+                if key_e in seen_candidates:
                     continue
-                seen_candidates.add(esc)
+                seen_candidates.add(key_e)
                 hex_body = esc.replace("\\x", "")
                 try:
                     raw = bytes.fromhex(hex_body)

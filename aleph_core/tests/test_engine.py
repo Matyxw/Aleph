@@ -357,5 +357,234 @@ class TestEngineTranscendenceHooksAndPareto(unittest.TestCase):
             self.assertEqual(reg_rate, 0.0)
 
 
+class TestHotPathWiringAndEdgeResilience(unittest.TestCase):
+    def test_engine_execute_dag_populates_cost_allocation_and_fault_localization(self):
+        from aleph_core.router.dispatcher import DAGTaskNode, TaskContract
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            eng = AlephEngine(engine_id="dag_hot_path", db_path=Path(tmp) / "dag_hp.db")
+            eng.register_capability("step", lambda p: {"ok": True, "id": p.get("id")})
+            eng.register_capability("boom", lambda _p: (_ for _ in ()).throw(RuntimeError("root_boom")))
+            nodes = {
+                "ok_node": DAGTaskNode(
+                    contract=TaskContract(task_id="ok_node", task_type="step", input_payload={"id": 1}),
+                    verifier_fn=lambda res: isinstance(res, dict) and bool(res.get("ok")),
+                ),
+                "bad_root": DAGTaskNode(
+                    contract=TaskContract(task_id="bad_root", task_type="boom", input_payload={}),
+                ),
+                "bad_child": DAGTaskNode(
+                    contract=TaskContract(task_id="bad_child", task_type="step", input_payload={"id": 2}),
+                    dependencies={"bad_root"},
+                    verifier_fn=lambda _r: False,
+                ),
+            }
+            res = eng.execute_dag(nodes)
+            self.assertIn("allocations", res.compute_allocation)
+            self.assertEqual(res.fault_localization.get("root_cause_nodes"), ["bad_root"])
+            self.assertEqual(res.fault_localization.get("cascaded_victim_nodes"), ["bad_child"])
+            self.assertEqual(res.fault_localization.get("healthy_reusable_envelopes"), ["ok_node"])
+
+    def test_engine_execute_dag_executes_ephemeral_cas_worktree_tx_for_file_patches(self):
+        from aleph_core.router.dispatcher import DAGTaskNode, TaskContract
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            eng = AlephEngine(engine_id="dag_tx_ok", db_path=Path(tmp) / "dag_tx.db")
+            eng.register_capability("emit", lambda p: {"ok": True})
+            base_py = "def root():\n    return 0\n"
+            nodes = {
+                "n1": DAGTaskNode(
+                    contract=TaskContract(
+                        task_id="n1",
+                        task_type="emit",
+                        input_payload={"file_patches": {"m.py": base_py + "\ndef a():\n    return 1\n"}},
+                    ),
+                    verifier_fn=lambda r: isinstance(r, dict) and bool(r.get("ok")),
+                ),
+                "n2": DAGTaskNode(
+                    contract=TaskContract(
+                        task_id="n2",
+                        task_type="emit",
+                        input_payload={"file_patches": {"m.py": base_py + "\ndef b():\n    return 2\n"}},
+                    ),
+                    verifier_fn=lambda r: isinstance(r, dict) and bool(r.get("ok")),
+                ),
+            }
+            res = eng.execute_dag(nodes, base_files={"m.py": base_py})
+            self.assertTrue(res.worktree_transaction.get("committed"))
+            merged_py = res.worktree_transaction["files"]["m.py"]
+            self.assertIn("def a()", merged_py)
+            self.assertIn("def b()", merged_py)
+
+    def test_engine_execute_dag_rolls_back_worktree_tx_on_conflicting_file_patches(self):
+        from aleph_core.router.dispatcher import DAGTaskNode, TaskContract
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            eng = AlephEngine(engine_id="dag_tx_conf", db_path=Path(tmp) / "dag_txc.db")
+            eng.register_capability("emit", lambda p: {"ok": True})
+            base_py = "def root():\n    return 0\n"
+            nodes = {
+                "n1": DAGTaskNode(
+                    contract=TaskContract(
+                        task_id="n1",
+                        task_type="emit",
+                        input_payload={"file_patches": {"m.py": "def root():\n    return 1\n"}},
+                    ),
+                    verifier_fn=lambda r: isinstance(r, dict) and bool(r.get("ok")),
+                ),
+                "n2": DAGTaskNode(
+                    contract=TaskContract(
+                        task_id="n2",
+                        task_type="emit",
+                        input_payload={"file_patches": {"m.py": "def root():\n    return 2\n"}},
+                    ),
+                    verifier_fn=lambda r: isinstance(r, dict) and bool(r.get("ok")),
+                ),
+            }
+            res = eng.execute_dag(nodes, base_files={"m.py": base_py})
+            self.assertFalse(res.worktree_transaction.get("committed"))
+            self.assertTrue(res.worktree_transaction.get("rolled_back"))
+            self.assertEqual(res.worktree_transaction.get("before_cas_root"), res.worktree_transaction.get("after_cas_root"))
+
+    def test_mcp_apply_semantic_patch_with_concurrent_branches_merges_and_blocks_conflict(self):
+        import json
+        from aleph_core.engine import AlephUniversalMCPServer
+
+        srv = AlephUniversalMCPServer()
+        base_ts = "export const a = 1;\nexport const b = 2;\nexport const c = 3;\n"
+        ok_resp = srv.handle_jsonrpc_request({
+            "jsonrpc": "2.0",
+            "id": 91,
+            "method": "tools/call",
+            "params": {
+                "name": "aleph_apply_semantic_patch",
+                "arguments": {
+                    "target_file_path": "mod.ts",
+                    "original_source": base_ts,
+                    "concurrent_branches": {
+                        "w1": base_ts.replace("a = 1", "a = 10"),
+                        "w2": base_ts.replace("c = 3", "c = 30"),
+                    },
+                },
+            },
+        })
+        raw = ok_resp["result"]
+        data = json.loads(raw["content"][0]["text"]) if isinstance(raw, dict) and "content" in raw else raw
+        self.assertTrue(data["success"])
+        self.assertIn("a = 10", data["patched_code"])
+        self.assertIn("c = 30", data["patched_code"])
+
+        conf_resp = srv.handle_jsonrpc_request({
+            "jsonrpc": "2.0",
+            "id": 92,
+            "method": "tools/call",
+            "params": {
+                "name": "aleph_apply_semantic_patch",
+                "arguments": {
+                    "target_file_path": "mod.ts",
+                    "original_source": base_ts,
+                    "concurrent_branches": {
+                        "w1": base_ts.replace("b = 2", "b = 20"),
+                        "w2": base_ts.replace("b = 2", "b = 99"),
+                    },
+                },
+            },
+        })
+        raw_c = conf_resp["result"]
+        data_c = json.loads(raw_c["content"][0]["text"]) if isinstance(raw_c, dict) and "content" in raw_c else raw_c
+        self.assertFalse(data_c["success"])
+        self.assertTrue(data_c["rolled_back"])
+
+    def test_mcp_apply_semantic_patch_with_concurrent_branches_blocks_aegis_payload(self):
+        import json
+        from aleph_core.engine import AlephUniversalMCPServer
+
+        srv = AlephUniversalMCPServer()
+        bad_call = "def bad(u):\n    return " + "ev" + "al(u)\n"
+        resp = srv.handle_jsonrpc_request({
+            "jsonrpc": "2.0",
+            "id": 93,
+            "method": "tools/call",
+            "params": {
+                "name": "aleph_apply_semantic_patch",
+                "arguments": {
+                    "target_file_path": "x.py",
+                    "original_source": "def ok():\n    return 1\n",
+                    "concurrent_branches": {"malicious": bad_call},
+                },
+            },
+        })
+        raw = resp["result"]
+        data = json.loads(raw["content"][0]["text"]) if isinstance(raw, dict) and "content" in raw else raw
+        self.assertFalse(data["success"])
+        self.assertTrue(data["rolled_back"])
+        self.assertIn("AEGIS_BLOCKED", data["error"])
+
+    def test_forensic_circuit_breaker_empty_error_and_resets_on_success(self):
+        from aleph_core.engine import ForensicCircuitBreaker
+
+        cb = ForensicCircuitBreaker(failure_threshold=2)
+        fp = cb.compute_fingerprint("op", {"k": 1})
+        self.assertEqual(cb.record_failure(fp, ""), 1)
+        self.assertFalse(cb.is_open(fp)[0])
+        self.assertEqual(cb.record_failure(fp, ""), 2)
+        self.assertTrue(cb.is_open(fp)[0])
+        cb.record_success(fp)
+        self.assertFalse(cb.is_open(fp)[0])
+
+    def test_forensic_circuit_breaker_isolated_per_ast_and_payload(self):
+        from aleph_core.engine import ForensicCircuitBreaker
+
+        cb = ForensicCircuitBreaker(failure_threshold=2)
+        fp1 = cb.compute_fingerprint("op", {"a": 1}, "def f():\n    return 1\n")
+        fp2 = cb.compute_fingerprint("op", {"a": 1}, "def f():\n    return 2\n")
+        self.assertNotEqual(fp1, fp2)
+        cb.record_failure(fp1, "err")
+        cb.record_failure(fp1, "err")
+        self.assertTrue(cb.is_open(fp1)[0])
+        self.assertFalse(cb.is_open(fp2)[0])
+
+    def test_pareto_regression_gate_detects_tampered_golden_claim_without_proof(self):
+        from aleph_core.evolution.demiurgo_loop import ParetoRegressionEvolutionGate
+        from aleph_core.state.epistemic import EpistemicClaim
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            eng = AlephEngine(engine_id="pareto_tamper", db_path=Path(tmp) / "pt.db")
+            tampered_claim = EpistemicClaim(
+                claim_id="bad_golden",
+                description="Missing proof hash",
+                payload={"x": 1},
+                status=EpistemicStatus.VERIFIED,
+                proof_hash=None,
+            )
+            eng.state_store.save_claim(tampered_claim)
+            ok, reg_rate, count = ParetoRegressionEvolutionGate.verify_golden_suite_no_regression(eng.state_store)
+            self.assertFalse(ok)
+            self.assertEqual(count, 1)
+            self.assertEqual(reg_rate, 100.0)
+
+    def test_pareto_regression_gate_rejects_blank_clauses_and_promotes_valid_rule(self):
+        from aleph_core.evolution.demiurgo_loop import ParetoRegressionEvolutionGate
+        from aleph_core.memory.bicameral import AlgorithmicRule
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            eng = AlephEngine(engine_id="pareto_blank", db_path=Path(tmp) / "pb.db")
+            blank = AlgorithmicRule("R1", "Código", "Alta", "f", "", "action", "avoid")
+            promoted, p_ok, _, _ = ParetoRegressionEvolutionGate.evaluate_candidate_rule(blank, eng.state_store)
+            self.assertFalse(promoted)
+            self.assertFalse(p_ok)
+
+    def test_ab_eval_cli_builtin_sota_returns_zero(self):
+        import contextlib
+        import io
+        import aleph_cli
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = aleph_cli.cmd_ab_eval(["--builtin-sota"])
+        self.assertEqual(rc, 0)
+        self.assertIn("mcnemar_p", buf.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

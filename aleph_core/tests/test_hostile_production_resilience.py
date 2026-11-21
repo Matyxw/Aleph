@@ -794,5 +794,247 @@ class TestWave2CausalAndWorktreeTransaction(unittest.TestCase):
         self.assertIn("token_savings_pct", buf.getvalue())
 
 
+class TestProportionalPolyglotAndHotPathProperties(unittest.TestCase):
+    def test_pcche_verify_integrity_detects_cas_corruption(self):
+        from aleph_core.router.dispatcher import JITContextEntropyCompiler, ProofCarryingCausalEnvelope
+
+        env = JITContextEntropyCompiler.build_envelope("t1", {"ok": True}, "VERIFIED")
+        self.assertTrue(env.verify_integrity(raw_output={"ok": True}))
+        tampered = ProofCarryingCausalEnvelope(
+            task_id=env.task_id,
+            cas_sha256="0" * 64,
+            epistemic_status=env.epistemic_status,
+            proof_hash=env.proof_hash,
+            contracts_digest=env.contracts_digest,
+            diagnostic_triad=env.diagnostic_triad,
+            bpe_tokens_raw=env.bpe_tokens_raw,
+            bpe_tokens_compacted=env.bpe_tokens_compacted,
+            compression_ratio=env.compression_ratio,
+            vector_clock=env.vector_clock,
+        )
+        self.assertFalse(tampered.verify_integrity(raw_output={"ok": True}))
+
+    def test_pcche_verify_integrity_detects_invalid_hex_and_ast_mismatch(self):
+        from aleph_core.router.dispatcher import JITContextEntropyCompiler, ProofCarryingCausalEnvelope
+
+        src = "def f(x: int) -> int:\n    return x + 1\n"
+        env = JITContextEntropyCompiler.build_envelope("t2", "ok", "FORMALLY_PROVEN", formal_source_code=src)
+        self.assertTrue(env.verify_integrity(formal_source_code=src))
+        self.assertFalse(env.verify_integrity(formal_source_code="def f(x: int) -> int:\n    return x + 2\n"))
+        bad_hex = ProofCarryingCausalEnvelope("t2", "not_sha256", "VERIFIED", None, "", "", 1, 1, 1.0)
+        self.assertFalse(bad_hex.verify_integrity())
+
+    def test_pcche_verify_integrity_valid_on_source_and_dict(self):
+        from aleph_core.router.dispatcher import JITContextEntropyCompiler
+
+        env_d = JITContextEntropyCompiler.build_envelope("t3", {"a": 1, "b": 2}, "VERIFIED")
+        self.assertTrue(env_d.verify_integrity(raw_output={"b": 2, "a": 1}))
+
+    def test_jit_compiler_handles_empty_none_ansi_and_nested_dict(self):
+        from aleph_core.router.dispatcher import JITContextEntropyCompiler
+
+        c_none, r_n, c_n, _ = JITContextEntropyCompiler.compress_diagnostic_output(None)
+        self.assertEqual((c_none, r_n, c_n), ("", 0, 0))
+        ansi = "\x1b[31mAssertionError: critical failure\x1b[0m\n" + "\n".join(f"line_{i}" for i in range(120))
+        c_ansi, raw_t, comp_t, ratio = JITContextEntropyCompiler.compress_diagnostic_output(ansi, max_chars=400)
+        self.assertNotIn("\x1b[31m", c_ansi)
+        self.assertIn("AssertionError", c_ansi)
+        self.assertLess(comp_t, raw_t)
+        self.assertLess(ratio, 1.0)
+
+    def test_semantic_merger_polyglot_typescript_tsx_disjoint_and_conflict(self):
+        from aleph_core.router.dispatcher import SemanticCASWorktreeMerger
+
+        base_ts = "import React from 'react';\n\nexport const Header = () => <header>A</header>;\n\nexport const Body = () => <main>B</main>;\n\nexport const Footer = () => <footer>C</footer>;\n"
+        b1 = base_ts.replace("<header>A</header>", "<header>Alpha</header>")
+        b2 = base_ts.replace("<footer>C</footer>", "<footer>Omega</footer>")
+        ok = SemanticCASWorktreeMerger.merge_polyglot_branches("App.tsx", base_ts, {"w1": b1, "w2": b2})
+        self.assertTrue(ok["merged"])
+        self.assertIn("Alpha", ok["merged_source"])
+        self.assertIn("Omega", ok["merged_source"])
+
+        b_conf = base_ts.replace("<header>A</header>", "<header>Beta</header>")
+        bad = SemanticCASWorktreeMerger.merge_polyglot_branches("App.tsx", base_ts, {"w1": b1, "w2": b_conf})
+        self.assertFalse(bad["merged"])
+        self.assertGreaterEqual(len(bad["conflicts"]), 1)
+
+    def test_semantic_merger_polyglot_json_nested_disjoint_and_leaf_conflict(self):
+        from aleph_core.router.dispatcher import SemanticCASWorktreeMerger
+
+        base_j = '{"app": {"name": "aleph", "flags": {"a": false, "b": false}}, "v": 1}\n'
+        j1 = '{"app": {"name": "aleph", "flags": {"a": true, "b": false}}, "v": 1}\n'
+        j2 = '{"app": {"name": "aleph", "flags": {"a": false, "b": true}}, "v": 1}\n'
+        ok = SemanticCASWorktreeMerger.merge_polyglot_branches("pkg.json", base_j, {"b1": j1, "b2": j2})
+        self.assertTrue(ok["merged"])
+        parsed = __import__("json").loads(ok["merged_source"])
+        self.assertEqual(parsed["app"]["flags"], {"a": True, "b": True})
+
+        j_c = '{"app": {"name": "aleph", "flags": {"a": false, "b": false}}, "v": 2}\n'
+        j_d = '{"app": {"name": "aleph", "flags": {"a": false, "b": false}}, "v": 3}\n'
+        bad = SemanticCASWorktreeMerger.merge_polyglot_branches("pkg.json", base_j, {"b1": j_c, "b2": j_d})
+        self.assertFalse(bad["merged"])
+        self.assertEqual(bad["conflicts"][0]["json_path"], "v")
+
+    def test_semantic_merger_polyglot_yaml_markdown_shell_blocks(self):
+        from aleph_core.router.dispatcher import SemanticCASWorktreeMerger
+
+        base_yaml = "service: aleph\nports:\n  - 8080\nenv:\n  LOG: info\n  MODE: prod\n"
+        y1 = base_yaml.replace("8080", "9090")
+        y2 = base_yaml.replace("LOG: info", "LOG: debug")
+        ok_y = SemanticCASWorktreeMerger.merge_polyglot_branches("cfg.yaml", base_yaml, {"a": y1, "b": y2})
+        self.assertTrue(ok_y["merged"])
+        self.assertIn("9090", ok_y["merged_source"])
+        self.assertIn("LOG: debug", ok_y["merged_source"])
+
+        base_sh = "#!/usr/bin/env bash\nSTEP_1=ok\nSTEP_2=ok\nSTEP_3=ok\n"
+        ok_sh = SemanticCASWorktreeMerger.merge_polyglot_branches(
+            "run.sh",
+            base_sh,
+            {"s1": base_sh.replace("STEP_1=ok", "STEP_1=fast"), "s2": base_sh.replace("STEP_3=ok", "STEP_3=safe")},
+        )
+        self.assertTrue(ok_sh["merged"])
+        self.assertIn("STEP_1=fast", ok_sh["merged_source"])
+        self.assertIn("STEP_3=safe", ok_sh["merged_source"])
+
+    def test_semantic_merger_empty_and_identical_branches_no_false_conflict(self):
+        from aleph_core.router.dispatcher import SemanticCASWorktreeMerger
+
+        base = "line1\nline2\nline3\n"
+        same = base.replace("line2", "line2_updated")
+        ok_same = SemanticCASWorktreeMerger.merge_polyglot_branches("notes.md", base, {"a": same, "b": same})
+        self.assertTrue(ok_same["merged"])
+        self.assertIn("line2_updated", ok_same["merged_source"])
+        ok_empty = SemanticCASWorktreeMerger.merge_polyglot_branches("notes.md", base, {})
+        self.assertTrue(ok_empty["merged"])
+
+    def test_ephemeral_tx_disk_commit_and_partial_crash_rollback(self):
+        import tempfile
+        from pathlib import Path
+        from aleph_core.router.dispatcher import EphemeralCASWorktreeTransaction
+
+        with tempfile.TemporaryDirectory(prefix="tx_disk_", ignore_cleanup_errors=True) as tmp:
+            ws = Path(tmp)
+            (ws / "a.ts").write_text("export const A = 1;\n", encoding="utf-8")
+            (ws / "b.json").write_text('{"x": 1}\n', encoding="utf-8")
+            tx = EphemeralCASWorktreeTransaction({"a.ts": "export const A = 1;\n", "b.json": '{"x": 1}\n'})
+            tx.stage_agent_patch("w1", "a.ts", "export const A = 2;\n")
+            tx.stage_agent_patch("w2", "b.json", '{"x": 2}\n')
+            res_crash = tx.commit_to_disk(ws, simulate_crash_after_n_files=1)
+            self.assertFalse(res_crash["committed"])
+            self.assertTrue(res_crash["rolled_back"])
+            self.assertEqual(res_crash["before_cas_root"], res_crash["after_cas_root"])
+            self.assertEqual((ws / "a.ts").read_text(encoding="utf-8"), "export const A = 1;\n")
+            self.assertEqual((ws / "b.json").read_text(encoding="utf-8"), '{"x": 1}\n')
+
+            tx.stage_agent_patch("w1", "a.ts", "export const A = 2;\n")
+            tx.stage_agent_patch("w2", "b.json", '{"x": 2}\n')
+            res_ok = tx.commit_to_disk(ws)
+            self.assertTrue(res_ok["committed"])
+            self.assertEqual((ws / "a.ts").read_text(encoding="utf-8"), "export const A = 2;\n")
+
+    def test_ephemeral_tx_rejects_broken_json_and_broken_python_on_stage(self):
+        from aleph_core.router.dispatcher import EphemeralCASWorktreeTransaction
+
+        tx = EphemeralCASWorktreeTransaction({})
+        bad_py = tx.stage_agent_patch("a1", "x.py", "def broken(:\n")
+        self.assertFalse(bad_py["staged"])
+        self.assertIn("SYNTAX_ERROR", bad_py["reason"])
+        bad_json = tx.stage_agent_patch("a1", "x.json", "{bad json")
+        self.assertFalse(bad_json["staged"])
+        self.assertIn("JSON_ERROR", bad_json["reason"])
+        bad_inp = tx.stage_agent_patch("", "x.py", "def ok(): pass\n")
+        self.assertFalse(bad_inp["staged"])
+
+    def test_real_git_worktree_4_parallel_workers_polyglot_and_collision_on_disk(self):
+        from ab_eval.real_world_stress import _run_git_worktree_concurrency_scenario
+
+        rep = _run_git_worktree_concurrency_scenario()
+        self.assertTrue(rep["passed"], f"Git worktree scenario failed: {rep}")
+
+    def test_counterfactual_localizer_empty_and_none_inputs(self):
+        from aleph_core.router.dispatcher import CounterfactualFaultLocalizer
+
+        rep_none = CounterfactualFaultLocalizer.localize_dag_faults(None, None)
+        self.assertTrue(rep_none["all_healthy"])
+        self.assertEqual(rep_none["blast_radius_pct"], 0.0)
+        rep_empty = CounterfactualFaultLocalizer.localize_dag_faults({}, None)
+        self.assertTrue(rep_empty["all_healthy"])
+
+    def test_counterfactual_localizer_all_healthy_reuses_100_pct(self):
+        from aleph_core.router.dispatcher import (
+            CounterfactualFaultLocalizer,
+            DAGScheduleResult,
+            DAGTaskNode,
+            JITContextEntropyCompiler,
+            TaskContract,
+        )
+
+        nodes = {
+            f"n{i}": DAGTaskNode(contract=TaskContract(task_id=f"n{i}", task_type="code", input_payload={"i": i}))
+            for i in range(3)
+        }
+        envs = {tid: JITContextEntropyCompiler.build_envelope(tid, {"ok": True}, "VERIFIED").to_dict() for tid in nodes}
+        sched = DAGScheduleResult(3, 1, 1.0, 2.0, 2.0, {tid: {"status": "SUCCESS"} for tid in nodes}, True, 0, envs)
+        rep = CounterfactualFaultLocalizer.localize_dag_faults(nodes, sched)
+        self.assertTrue(rep["all_healthy"])
+        self.assertEqual(rep["reexecution_savings_pct"], 100.0)
+        self.assertEqual(len(rep["healthy_reusable_envelopes"]), 3)
+
+    def test_counterfactual_localizer_transitive_chain_taints_downstream(self):
+        from aleph_core.router.dispatcher import (
+            CounterfactualFaultLocalizer,
+            DAGScheduleResult,
+            DAGTaskNode,
+            JITContextEntropyCompiler,
+            TaskContract,
+        )
+
+        nodes = {
+            "a": DAGTaskNode(contract=TaskContract(task_id="a", task_type="c", input_payload={})),
+            "b": DAGTaskNode(contract=TaskContract(task_id="b", task_type="c", input_payload={}), dependencies={"a"}),
+            "c": DAGTaskNode(contract=TaskContract(task_id="c", task_type="c", input_payload={}), dependencies={"b"}),
+            "iso": DAGTaskNode(contract=TaskContract(task_id="iso", task_type="c", input_payload={})),
+        }
+        envs = {tid: JITContextEntropyCompiler.build_envelope(tid, {"ok": True}, "VERIFIED").to_dict() for tid in nodes}
+        sched = DAGScheduleResult(
+            4, 3, 2.0, 4.0, 2.0,
+            {"a": {"status": "FAILED"}, "b": {"status": "SUCCESS"}, "c": {"status": "SUCCESS"}, "iso": {"status": "SUCCESS"}},
+            False, 0, envs,
+        )
+        rep = CounterfactualFaultLocalizer.localize_dag_faults(nodes, sched)
+        self.assertEqual(rep["root_cause_nodes"], ["a"])
+        self.assertEqual(rep["healthy_reusable_envelopes"], ["iso"])
+        self.assertEqual(rep["blast_radius_pct"], 75.0)
+
+    def test_cost_router_allocate_dag_compute_empty_and_budget_cap(self):
+        from aleph_core.router.cost_router import SovereignCostRouter
+
+        empty_rep = SovereignCostRouter.allocate_dag_compute({})
+        self.assertEqual(empty_rep["total_allocated_tokens"], 0)
+        tight = SovereignCostRouter.allocate_dag_compute(
+            {
+                "t0": "[CAS] quick hash",
+                "t1": "Formal Z3 SMT security RLS verification theorem " * 10,
+                "t2": "Formal SQL deadlock proof invariant " * 10,
+            },
+            total_token_budget=1500,
+        )
+        self.assertLessEqual(tight["total_allocated_tokens"], 1500)
+        self.assertEqual(tight["allocations"]["t0"]["token_budget"], 0)
+
+    def test_hostile_real_world_stress_cli_exit_zero(self):
+        import contextlib
+        import io
+        import json
+        import aleph_cli
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = aleph_cli.cmd_ab_eval(["--mode", "hostile"])
+        self.assertEqual(rc, 0)
+        parsed = json.loads(buf.getvalue())
+        self.assertTrue(parsed["all_invariants_passed"])
+
+
 if __name__ == "__main__":
     unittest.main()
