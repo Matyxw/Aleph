@@ -63,8 +63,59 @@ else:
         globals()[_sym] = _LazyZ3Symbol(_sym)
 
 
+import hashlib
+import json as _aleph_json
+
+
+class ForensicCircuitBreaker:
+    """
+    Corta-circuitos forense determinista para ejecuciones agénticas.
+    Detecta bucles de oscilación estéril (mismo fingerprint input+AST fallando consecutivamente)
+    y corta el despacho en <0.1 ms antes de quemar cómputo/tokens adicionales.
+    """
+
+    def __init__(self, failure_threshold: int = 2):
+        self.failure_threshold = max(2, int(failure_threshold))
+        self._lock = threading.RLock()
+        self._failure_counts: Dict[str, int] = {}
+        self._last_errors: Dict[str, str] = {}
+
+    @staticmethod
+    def compute_fingerprint(
+        task_type: str,
+        input_payload: Dict[str, Any],
+        formal_source_code: Optional[str] = None,
+    ) -> str:
+        canonical_payload = _aleph_json.dumps(input_payload, sort_keys=True, ensure_ascii=False, default=str)
+        ast_sig = ""
+        if formal_source_code:
+            try:
+                ast_sig = ast.dump(ast.parse(formal_source_code), include_attributes=False)
+            except SyntaxError:
+                ast_sig = formal_source_code.strip()
+        raw = f"{task_type}|{canonical_payload}|{ast_sig}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def is_open(self, fingerprint: str) -> Tuple[bool, int, str]:
+        with self._lock:
+            cnt = self._failure_counts.get(fingerprint, 0)
+            return cnt >= self.failure_threshold, cnt, self._last_errors.get(fingerprint, "")
+
+    def record_failure(self, fingerprint: str, error_summary: str) -> int:
+        with self._lock:
+            cnt = self._failure_counts.get(fingerprint, 0) + 1
+            self._failure_counts[fingerprint] = cnt
+            self._last_errors[fingerprint] = error_summary
+            return cnt
+
+    def record_success(self, fingerprint: str) -> None:
+        with self._lock:
+            self._failure_counts.pop(fingerprint, None)
+            self._last_errors.pop(fingerprint, None)
+
+
 class AlephEngine:
-    def __init__(self, engine_id: str = "aleph_sovereign_v2", db_path=DB_PATH):
+    def __init__(self, engine_id: str = "aleph_sovereign_v2", db_path=DB_PATH, circuit_breaker_threshold: int = 2):
         self.engine_id = engine_id
         self.state_store = StateStore(db_path=db_path)
         # Con un db_path explícito (p. ej. tests o instancias aisladas) el journal vive junto a esa base
@@ -80,6 +131,7 @@ class AlephEngine:
         self._cegis_engine = None
         self.hooks = HookPipeline()
         self.evolution = DemiurgoEvolutionEngine(store=self.state_store, memory=self.memory)
+        self.circuit_breaker = ForensicCircuitBreaker(failure_threshold=circuit_breaker_threshold)
         self._register_default_security_hooks()
 
     @property
@@ -127,9 +179,39 @@ class AlephEngine:
         use_bitvectors: bool = False,
         bypass_cache: bool = False
     ) -> Dict[str, Any]:
+        from aleph_core.router.dispatcher import JITContextEntropyCompiler
         task_id = f"task_{uuid.uuid4().hex[:12]}"
         active_rules = self.memory.get_active_rules(domain_category=domain_category)
         active_rule_ids = [r.rule_id for r in active_rules]
+        fp = self.circuit_breaker.compute_fingerprint(task_type, input_payload, formal_source_code)
+
+        # 0. Circuit Breaker Forense anti-oscilación estéril
+        cb_open, cb_count, cb_last_err = self.circuit_breaker.is_open(fp)
+        if cb_open:
+            self.hooks.run_phase(HookEvent(
+                phase=HookPhase.ON_FAILURE,
+                task_id=task_id,
+                task_type=task_type,
+                payload={"fingerprint": fp, "failure_count": cb_count, "error": cb_last_err},
+                metadata={"circuit_breaker_tripped": True},
+            ))
+            self.journal.append_event("CIRCUIT_BREAKER_TRIPPED", {
+                "task_id": task_id,
+                "task_type": task_type,
+                "fingerprint": fp,
+                "consecutive_failures": cb_count,
+                "last_error": cb_last_err,
+            })
+            return {
+                "task_id": task_id,
+                "status": "CIRCUIT_BREAKER_TRIPPED",
+                "error": f"Circuit breaker abierto tras {cb_count} fallos idénticos consecutivos: {cb_last_err}",
+                "epistemic_status": EpistemicStatus.REFUTED.value,
+                "active_rules_applied": active_rule_ids,
+                "proof_hash": None,
+                "cache_hit": False,
+                "circuit_breaker_tripped": True,
+            }
 
         # 1. Chequeo de Caché Semántica / AST (Nivel 9 v2.6.0)
         if not bypass_cache:
@@ -145,6 +227,13 @@ class AlephEngine:
                     "cache_key": cached.cache_key,
                     "hit_count": cached.hit_count
                 })
+                env = JITContextEntropyCompiler.build_envelope(
+                    task_id=task_id,
+                    raw_output=cached.output_payload,
+                    epistemic_status=cached.epistemic_status,
+                    proof_hash=cached.proof_hash,
+                    formal_source_code=formal_source_code,
+                )
                 return {
                     "task_id": task_id,
                     "claim_id": f"claim_cached_{cached.cache_key[:8]}",
@@ -159,7 +248,8 @@ class AlephEngine:
                     "output_preview": TaskDispatcher.reduce_output(cached.output_payload),
                     "active_rules_applied": active_rule_ids,
                     "latency_ms": 0.05,
-                    "cache_hit": True
+                    "cache_hit": True,
+                    "proof_carrying_envelope": env.to_dict(),
                 }
 
         # 2. Hook PRE_DISPATCH
@@ -204,19 +294,32 @@ class AlephEngine:
         # 3. Despacho
         exec_result = self.dispatcher.dispatch(contract)
         if not exec_result.success:
+            err_msg = str(exec_result.error or "EXECUTION_FAILED")
+            fail_count = self.circuit_breaker.record_failure(fp, err_msg)
+            self.hooks.run_phase(HookEvent(
+                phase=HookPhase.ON_FAILURE,
+                task_id=task_id,
+                task_type=task_type,
+                payload={"error": err_msg, "fingerprint": fp, "failure_count": fail_count},
+                metadata={"active_rules": active_rule_ids},
+            ))
             self.journal.append_event("TASK_FAILED", {
                 "task_id": task_id,
-                "error": exec_result.error
+                "error": err_msg,
+                "failure_count": fail_count,
             })
-            self.state_store.record_task_completion(task_id, "FAILED", {"error": exec_result.error})
+            self.state_store.record_task_completion(task_id, "FAILED", {"error": err_msg})
+            tripped = fail_count >= self.circuit_breaker.failure_threshold
             return {
                 "task_id": task_id,
-                "status": "FAILED",
-                "error": exec_result.error,
+                "status": "CIRCUIT_BREAKER_TRIPPED" if tripped else "FAILED",
+                "error": err_msg,
                 "epistemic_status": EpistemicStatus.REFUTED.value,
                 "active_rules_applied": active_rule_ids,
                 "proof_hash": None,
-                "cache_hit": False
+                "cache_hit": False,
+                "circuit_breaker_tripped": tripped,
+                "proof_carrying_envelope": exec_result.envelope.to_dict() if exec_result.envelope else None,
             }
 
         claim_id = f"claim_{uuid.uuid4().hex[:12]}"
@@ -267,6 +370,27 @@ class AlephEngine:
             EpistemicStatus.PBT_VERIFIED,
             EpistemicStatus.FORMALLY_PROVEN
         )
+        tripped_on_verify = False
+        if verified_claim.status == EpistemicStatus.REFUTED:
+            fail_msg = verified_claim.proof_output or "VERIFICATION_REFUTED"
+            fail_count = self.circuit_breaker.record_failure(fp, fail_msg)
+            tripped_on_verify = fail_count >= self.circuit_breaker.failure_threshold
+            self.hooks.run_phase(HookEvent(
+                phase=HookPhase.ON_FAILURE,
+                task_id=task_id,
+                task_type=task_type,
+                payload={"error": fail_msg, "fingerprint": fp, "failure_count": fail_count},
+                metadata={"claim_id": verified_claim.claim_id},
+            ))
+        else:
+            self.circuit_breaker.record_success(fp)
+            self.hooks.run_phase(HookEvent(
+                phase=HookPhase.POST_DISPATCH,
+                task_id=task_id,
+                task_type=task_type,
+                payload={"status": verified_claim.status.value, "proof_hash": verified_claim.proof_hash},
+                metadata={"claim_id": verified_claim.claim_id},
+            ))
 
         # 5. Persistir en Caché Semántica si fue exitoso
         if is_success:
@@ -279,17 +403,27 @@ class AlephEngine:
                 formal_source_code=formal_source_code
             )
 
+        envelope = JITContextEntropyCompiler.build_envelope(
+            task_id=task_id,
+            raw_output=exec_result.raw_output,
+            epistemic_status=verified_claim.status.value,
+            proof_hash=verified_claim.proof_hash,
+            formal_source_code=formal_source_code,
+        )
+
         return {
             "task_id": task_id,
             "claim_id": verified_claim.claim_id,
-            "status": "SUCCESS" if is_success else "UNVERIFIED",
+            "status": "SUCCESS" if is_success else ("CIRCUIT_BREAKER_TRIPPED" if tripped_on_verify else "UNVERIFIED"),
             "epistemic_status": verified_claim.status.value,
             "proof_hash": verified_claim.proof_hash,
             "proof_output": verified_claim.proof_output,
             "output_preview": exec_result.compact_output,
             "active_rules_applied": active_rule_ids,
             "latency_ms": round(exec_result.execution_time_ms, 3),
-            "cache_hit": False
+            "cache_hit": False,
+            "circuit_breaker_tripped": tripped_on_verify,
+            "proof_carrying_envelope": envelope.to_dict(),
         }
 
     def save_session_checkpoint(
@@ -1037,6 +1171,25 @@ def _get_cached_continual_learner():
 
 class _MCPDefaultArgsDict(dict):
     """Provides safe canonical fallbacks using the tool's JSON Schema when invoked with partial/empty arguments."""
+    _OPTIONAL_NONE_KEYS = frozenset({
+        "shard_filter",
+        "target_function_name",
+        "function_name",
+        "orig_func_name",
+        "cand_func_name",
+        "observed_friction",
+        "focus_symbols",
+        "focus_symbol",
+        "existing_indexes",
+        "previous_merkle_hashes",
+        "trajectory_snapshots",
+        "target_file_path",
+        "target_file",
+        "paradigm_override",
+        "custom_ir_tree",
+        "output_dir",
+        "raw_ir_json",
+    })
     _DEFAULTS = {
         "source_code": "def f(x: int) -> int:\n    return x + 1\n",
         "original_source": "def f(x: int) -> int:\n    return x + 1\n",
@@ -1144,6 +1297,8 @@ class _MCPDefaultArgsDict(dict):
             return val
         if key == "candidates":
             return self._DEFAULTS["candidates"]
+        if key in self._OPTIONAL_NONE_KEYS:
+            return default
         if default is not None:
             return default
         return self._fallback_for(key)

@@ -1,11 +1,12 @@
 """
-Enrutador Tecno-Económico Soberano y Compuerta Anti-Hype (REG-002).
+Enrutador Tecno-Económico Soberano, Compuerta Anti-Hype y Orquestador Cognitivo Asimétrico (REG-002).
 Garantiza que toda carga interactiva o de razonamiento pesado se enrute primero a
 Gemini 4 Argon ($0.00 USD marginal en suscripción Gemini Pro) antes de gastar un solo
-centavo en APIs externas, y evalúa modelos candidatos con la rúbrica cuantitativa 0-100.
+centavo en APIs externas, y asigna cómputo asimétrico (Tier 0 AST/CAS a Tier 3 Razón Profunda)
+según entropía de Shannon y densidad estructural.
 """
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 import math
 import re
 from typing import Dict, Any, Optional
@@ -30,6 +31,19 @@ class AntiHypeEvaluation:
     total_score: int
     verdict: str                   # 'MIGRAR YA' | 'PROBAR EN SANDBOX' | 'MONITOREAR' | 'DESCARTADO POR HYPE'
     passed_gate: bool
+
+
+@dataclass(frozen=True)
+class AsymmetricComputeAllocation:
+    """Asignación asimétrica de tier cognitivo y presupuesto de tokens para un nodo del DAG."""
+    node_id: str
+    tier: str
+    token_budget: int
+    shannon_entropy_bits: float
+    structural_complexity_score: float
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
 
 def _shannon_entropy_bits(text: str) -> float:
@@ -149,6 +163,82 @@ class SovereignCostRouter:
                 f"{metrics_suffix}"
             ),
         )
+
+    @staticmethod
+    def allocate_dag_compute(
+        nodes_prompts: Dict[str, str],
+        total_token_budget: int = 12000,
+    ) -> Dict[str, Any]:
+        """
+        Orquestación Cognitiva Asimétrica sobre nodos de un DAG:
+        - TIER_0_DETERMINISTIC_AST_CAS (0 tokens LLM): chequeos mecánicos, hashes CAS o tags [AST]/[CAS]/[Z3_LOCAL].
+        - TIER_1_FIM_AUTOCOMPLETE (<= 512 tokens): ediciones locales de baja entropía.
+        - TIER_2_LIGHTWEIGHT_SOVEREIGN (<= 2048 tokens): lógica moderada / pruebas puntuales.
+        - TIER_3_SOVEREIGN_REASONER (presupuesto prioritario): síntesis formal Z3, arquitectura y auditoría crítica.
+        """
+        if not nodes_prompts:
+            return {
+                "allocations": {},
+                "total_allocated_tokens": 0,
+                "total_token_budget": total_token_budget,
+                "naive_uniform_tokens": 0,
+                "token_savings_pct": 0.0,
+            }
+
+        raw_specs: Dict[str, Tuple[str, int, float, float]] = {}
+        for nid, text in nodes_prompts.items():
+            m = _structural_complexity_metrics(text)
+            ent = m["shannon_entropy_bits"]
+            comp = m["structural_complexity_score"]
+            tok = m["token_count"]
+            upper = text.upper()
+
+            if "[CAS]" in upper or "[AST]" in upper or "[Z3_LOCAL]" in upper or (tok <= 12 and ent < 3.4 and comp < 0.35):
+                tier, desired = "TIER_0_DETERMINISTIC_AST_CAS", 0
+            elif tok < 45 and ent < 3.9 and comp < 0.45:
+                tier, desired = "TIER_1_FIM_AUTOCOMPLETE", 512
+            elif ent >= 4.2 or comp >= 0.50 or tok >= 120:
+                tier, desired = "TIER_3_SOVEREIGN_REASONER", min(4096, max(2048, tok * 8))
+            else:
+                tier, desired = "TIER_2_LIGHTWEIGHT_SOVEREIGN", 1536
+            raw_specs[nid] = (tier, desired, ent, comp)
+
+        desired_sum = sum(v[1] for v in raw_specs.values())
+        scale = min(1.0, float(total_token_budget) / max(1, desired_sum)) if desired_sum > total_token_budget else 1.0
+
+        allocations: Dict[str, Dict[str, Any]] = {}
+        total_allocated = 0
+        for nid in sorted(raw_specs.keys()):
+            tier, desired, ent, comp = raw_specs[nid]
+            budget = 0 if desired == 0 else max(128, int(desired * scale))
+            alloc = AsymmetricComputeAllocation(
+                node_id=nid,
+                tier=tier,
+                token_budget=budget,
+                shannon_entropy_bits=ent,
+                structural_complexity_score=comp,
+            )
+            allocations[nid] = alloc.to_dict()
+            total_allocated += budget
+
+        # Ajuste exacto si el redondeo superó total_token_budget
+        if total_allocated > total_token_budget and total_allocated > 0:
+            excess = total_allocated - total_token_budget
+            for nid in sorted(allocations.keys(), key=lambda k: allocations[k]["token_budget"], reverse=True):
+                if allocations[nid]["token_budget"] > excess:
+                    allocations[nid]["token_budget"] -= excess
+                    total_allocated -= excess
+                    break
+
+        naive_uniform = len(nodes_prompts) * 4096
+        savings_pct = round(max(0.0, (1.0 - (total_allocated / max(1, naive_uniform))) * 100.0), 2)
+        return {
+            "allocations": allocations,
+            "total_allocated_tokens": total_allocated,
+            "total_token_budget": total_token_budget,
+            "naive_uniform_tokens": naive_uniform,
+            "token_savings_pct": savings_pct,
+        }
 
     @staticmethod
     def evaluate_external_model(

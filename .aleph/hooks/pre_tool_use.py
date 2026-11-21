@@ -30,6 +30,23 @@ FORBIDDEN_CODE_PATTERNS = (
 )
 
 
+def _scan_with_aegis_shield(text: str) -> List[str]:
+    """Ejecuta el escudo determinista de 5 capas (NFKC, homóglifos, Base64/Hex, firmas y AST taint)."""
+    if not text:
+        return []
+    repo_root = Path(__file__).resolve().parents[2]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    try:
+        from aleph_core.security.aegis_shield import AegisShield
+    except ImportError:
+        return []
+    rep = AegisShield.scan_text(text)
+    if rep.safe:
+        return []
+    return [f"AegisShield [{f.rule_id} - {f.category}]: {f.description}" for f in rep.findings]
+
+
 def evaluate_pre_tool_use(payload: Dict[str, Any]) -> Dict[str, Any]:
     cmd = str(payload.get("command", ""))
     code_content = str(payload.get("code", payload.get("content", "")))
@@ -41,11 +58,21 @@ def evaluate_pre_tool_use(payload: Dict[str, Any]) -> Dict[str, Any]:
             blocked = True
             reasons.append(f"Destructive command pattern matched: {pat}")
 
+    aegis_cmd_findings = _scan_with_aegis_shield(cmd)
+    if aegis_cmd_findings:
+        blocked = True
+        reasons.extend(aegis_cmd_findings)
+
     if code_content:
         for pat, msg in FORBIDDEN_CODE_PATTERNS:
             if re.search(pat, code_content, re.IGNORECASE):
                 blocked = True
                 reasons.append(msg)
+
+        aegis_code_findings = _scan_with_aegis_shield(code_content)
+        if aegis_code_findings:
+            blocked = True
+            reasons.extend(aegis_code_findings)
 
         if payload.get("language") == "python" or str(payload.get("file_path", "")).endswith(".py"):
             try:

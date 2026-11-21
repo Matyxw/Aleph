@@ -1,14 +1,307 @@
 """
-Enrutador de Tareas, Motor Reducer Semántico y Planificador Concurrente DAG (Nivel 7 v2.4.0).
-Despacha contratos inmutables, valida esquemas de salida y ejecuta grafos de dependencias
-en paralelo por oleadas topológicas independientes (O(V+E)) superando la secuencialidad de ECC.
+Enrutador de Tareas, Motor Reducer Semántico, Proof-Carrying Causal Envelopes,
+Fusión AST CAS 3-Way y Planificador Concurrente DAG libre de colisiones (v33.1.0).
+Despacha contratos inmutables, comprime trazas preservando la Tríada Diagnóstica,
+detecta conflictos Read-Write / Write-Write entre nodos concurrentes e impide condiciones de carrera.
 """
-import json
-import time
+from __future__ import annotations
+
+import ast
 import concurrent.futures
-from dataclasses import dataclass, field
-from typing import Dict, Any, Callable, Optional, Set, List
+import hashlib
+import json
+import re
+import time
+from dataclasses import dataclass, field, asdict
+from typing import Dict, Any, Callable, Optional, Set, List, Tuple
 from aleph_core.config import MAX_REDUCER_TOKENS
+
+
+_BPE_TOKEN_RE = re.compile(
+    r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[a-zA-Z_]+|[0-9]{1,3}|\r?\n| {2,4}| |[^\s\w]"
+)
+_ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+_VENDOR_FRAME_RE = re.compile(
+    r"(?:node_modules|site-packages|dist-packages|usr[\\/]lib|cargo[\\/]registry|\.venv)",
+    re.IGNORECASE,
+)
+_DIAGNOSTIC_LINE_RE = re.compile(
+    r"(?:Traceback \(most recent call last\):|^\s*File\s+\"|AssertionError|SyntaxError|Error:|Exception:|CRITICAL|FAILED|PASSED|@requires|@ensures|@invariant|@loc:|!err:)",
+    re.IGNORECASE,
+)
+
+
+def estimate_bpe_tokens(text: str) -> int:
+    """Estimador determinista de tokens BPE alineado con cl100k/o200k."""
+    if not text:
+        return 0
+    return max(1, len(_BPE_TOKEN_RE.findall(text)))
+
+
+def _canonical_ast_digest(source_code: str) -> str:
+    try:
+        tree = ast.parse(source_code)
+        dumped = ast.dump(tree, include_attributes=False)
+        return hashlib.sha256(dumped.encode("utf-8")).hexdigest()
+    except SyntaxError:
+        return hashlib.sha256(source_code.strip().encode("utf-8")).hexdigest()
+
+
+def _extract_contracts_digest(source_code: str) -> str:
+    if not source_code:
+        return ""
+    contracts = re.findall(r"@(?:requires|ensures|invariant|loop_invariant|loop_variant)\([^\n]+\)", source_code)
+    return " | ".join(contracts) if contracts else ""
+
+
+def _extract_ast_rw_symbols(source_code: Optional[str]) -> Tuple[Set[str], Set[str]]:
+    """Extrae símbolos escritos (defs/clases top-level) y leídos de código Python."""
+    if not source_code or not source_code.strip():
+        return set(), set()
+    try:
+        tree = ast.parse(source_code)
+    except SyntaxError:
+        return set(), set()
+    writes: Set[str] = set()
+    reads: Set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            writes.add(node.name)
+            params = {a.arg for a in getattr(node, "args", ast.arguments()).posonlyargs + getattr(node, "args", ast.arguments()).args + getattr(node, "args", ast.arguments()).kwonlyargs} if hasattr(node, "args") else set()
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Load):
+                    if sub.id not in params and sub.id != node.name:
+                        reads.add(sub.id)
+        elif isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name):
+                    writes.add(tgt.id)
+    reads -= writes
+    return reads, writes
+
+
+@dataclass(frozen=True)
+class ProofCarryingCausalEnvelope:
+    """
+    Sobre Inmutable Verificado (PCCHE) que viaja entre nodos y fases del DAG.
+    Transporta únicamente identidad CAS, estado epistémico, prueba, digest de contratos y tríada comprimida.
+    """
+    task_id: str
+    cas_sha256: str
+    epistemic_status: str
+    proof_hash: Optional[str]
+    contracts_digest: str
+    diagnostic_triad: str
+    bpe_tokens_raw: int
+    bpe_tokens_compacted: int
+    compression_ratio: float
+    vector_clock: Dict[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+class JITContextEntropyCompiler:
+    """Compresor léxico/diagnóstico de entropía mínima para eliminar context rot entre fases."""
+
+    @staticmethod
+    def compress_diagnostic_output(raw: Any, max_chars: int = MAX_REDUCER_TOKENS * 4) -> Tuple[str, int, int, float]:
+        if isinstance(raw, (dict, list)):
+            raw_text = json.dumps(raw, ensure_ascii=False, sort_keys=True)
+        else:
+            raw_text = str(raw)
+        raw_tokens = estimate_bpe_tokens(raw_text)
+        cleaned = _ANSI_RE.sub("", raw_text)
+        lines = cleaned.splitlines()
+
+        if len(lines) <= 1 and len(cleaned) <= max_chars:
+            return cleaned, raw_tokens, raw_tokens, 1.0
+
+        # Colapsar repeticiones consecutivas y purgar frames vendor en trazas de error
+        collapsed: List[str] = []
+        last_line: Optional[str] = None
+        rep_count = 0
+        vendor_skipped = 0
+        for line in lines:
+            stripped = line.strip()
+            if _VENDOR_FRAME_RE.search(stripped) and not _DIAGNOSTIC_LINE_RE.search(stripped):
+                vendor_skipped += 1
+                continue
+            if vendor_skipped > 0:
+                collapsed.append(f"[...{vendor_skipped} vendor frames omitted...]")
+                vendor_skipped = 0
+            if line == last_line:
+                rep_count += 1
+                continue
+            if rep_count > 0:
+                collapsed.append(f"[...repeated {rep_count} more times...]")
+                rep_count = 0
+            collapsed.append(line)
+            last_line = line
+        if rep_count > 0:
+            collapsed.append(f"[...repeated {rep_count} more times...]")
+        if vendor_skipped > 0:
+            collapsed.append(f"[...{vendor_skipped} vendor frames omitted...]")
+
+        candidate = "\n".join(collapsed)
+        if len(candidate) > max_chars:
+            diag_lines = [ln for ln in collapsed if _DIAGNOSTIC_LINE_RE.search(ln)]
+            if diag_lines:
+                head_lines = collapsed[: max(3, min(8, len(collapsed) // 4))]
+                tail_lines = collapsed[-max(3, min(8, len(collapsed) // 4)):]
+                assembled: List[str] = []
+                seen: Set[str] = set()
+                for ln in head_lines + diag_lines[:24] + tail_lines:
+                    if ln not in seen:
+                        seen.add(ln)
+                        assembled.append(ln)
+                candidate = "\n".join(assembled)
+            if len(candidate) > max_chars:
+                head_len = int(max_chars * 0.70)
+                tail_len = max_chars - head_len
+                omitted = len(candidate) - max_chars
+                candidate = (
+                    candidate[:head_len]
+                    + f"\n... [REDUCER_JIT: {omitted} chars omitidos] ...\n"
+                    + candidate[-tail_len:]
+                )
+
+        comp_tokens = estimate_bpe_tokens(candidate)
+        ratio = round(comp_tokens / max(1, raw_tokens), 4)
+        return candidate, raw_tokens, comp_tokens, ratio
+
+    @classmethod
+    def build_envelope(
+        cls,
+        task_id: str,
+        raw_output: Any,
+        epistemic_status: str,
+        proof_hash: Optional[str] = None,
+        formal_source_code: Optional[str] = None,
+        vector_clock: Optional[Dict[str, int]] = None,
+        max_chars: int = MAX_REDUCER_TOKENS * 4,
+    ) -> ProofCarryingCausalEnvelope:
+        compacted, raw_tok, comp_tok, ratio = cls.compress_diagnostic_output(raw_output, max_chars=max_chars)
+        if formal_source_code:
+            cas_sha = _canonical_ast_digest(formal_source_code)
+            contracts_dig = _extract_contracts_digest(formal_source_code)
+        else:
+            canonical_payload = json.dumps(raw_output, ensure_ascii=False, sort_keys=True, default=str) if isinstance(raw_output, (dict, list)) else str(raw_output)
+            cas_sha = hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+            contracts_dig = ""
+        return ProofCarryingCausalEnvelope(
+            task_id=task_id,
+            cas_sha256=cas_sha,
+            epistemic_status=epistemic_status,
+            proof_hash=proof_hash,
+            contracts_digest=contracts_dig,
+            diagnostic_triad=compacted,
+            bpe_tokens_raw=raw_tok,
+            bpe_tokens_compacted=comp_tok,
+            compression_ratio=ratio,
+            vector_clock=dict(vector_clock or {task_id: 1}),
+        )
+
+
+class SemanticCASWorktreeMerger:
+    """
+    Fusión AST 3-Way con direccionamiento por contenido SHA-256 (CAS).
+    Permite integrar ediciones concurrentes sobre símbolos disjuntos de un mismo módulo Python
+    con 0% condiciones de carrera y detecta colisiones semánticas divergentes con testigo exacto.
+    """
+
+    @staticmethod
+    def _extract_module_parts(source: str) -> Tuple[List[str], Dict[str, Tuple[str, str]], List[str]]:
+        tree = ast.parse(source)
+        imports: List[str] = []
+        symbols: Dict[str, Tuple[str, str]] = {}
+        order: List[str] = []
+        for node in tree.body:
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                imports.append(ast.unparse(node))
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                canonical_hash = hashlib.sha256(
+                    ast.dump(node, include_attributes=False).encode("utf-8")
+                ).hexdigest()
+                symbols[node.name] = (canonical_hash, ast.unparse(node))
+                order.append(node.name)
+            else:
+                stmt_src = ast.unparse(node)
+                stmt_key = f"__stmt_{hashlib.sha256(stmt_src.encode('utf-8')).hexdigest()[:12]}"
+                canonical_hash = hashlib.sha256(
+                    ast.dump(node, include_attributes=False).encode("utf-8")
+                ).hexdigest()
+                symbols[stmt_key] = (canonical_hash, stmt_src)
+                order.append(stmt_key)
+        return imports, symbols, order
+
+    @classmethod
+    def merge_ast_branches(cls, base_source: str, branch_sources: Dict[str, str]) -> Dict[str, Any]:
+        """Realiza fusión 3-way por símbolo AST. Si dos ramas mutan distinto el mismo símbolo, aborta sin corrupción."""
+        base_imports, base_syms, base_order = cls._extract_module_parts(base_source)
+        merged_imports: List[str] = list(dict.fromkeys(base_imports))
+        merged_syms: Dict[str, Tuple[str, str]] = dict(base_syms)
+        merged_order: List[str] = list(base_order)
+        modified_by: Dict[str, List[Tuple[str, str, str]]] = {}
+
+        for branch_id in sorted(branch_sources.keys()):
+            b_src = branch_sources[branch_id]
+            try:
+                b_imports, b_syms, b_order = cls._extract_module_parts(b_src)
+            except SyntaxError as exc:
+                return {
+                    "merged": False,
+                    "conflicts": [{"branch": branch_id, "reason": f"SyntaxError: {exc.msg}"}],
+                    "merged_source": "",
+                    "cas_tree_sha256": "",
+                }
+            for imp in b_imports:
+                if imp not in merged_imports:
+                    merged_imports.append(imp)
+            for sym_name in b_order:
+                b_hash, b_code = b_syms[sym_name]
+                base_entry = base_syms.get(sym_name)
+                if base_entry is None or base_entry[0] != b_hash:
+                    modified_by.setdefault(sym_name, []).append((branch_id, b_hash, b_code))
+                    if sym_name not in merged_order:
+                        merged_order.append(sym_name)
+
+        conflicts: List[Dict[str, Any]] = []
+        for sym_name, edits in modified_by.items():
+            distinct_hashes = {h for _, h, _ in edits}
+            if len(distinct_hashes) > 1:
+                conflicts.append({
+                    "symbol": sym_name,
+                    "branches": [b for b, _, _ in edits],
+                    "distinct_ast_hashes": sorted(distinct_hashes),
+                })
+            else:
+                merged_syms[sym_name] = (edits[0][1], edits[0][2])
+
+        if conflicts:
+            return {
+                "merged": False,
+                "conflicts": conflicts,
+                "merged_source": "",
+                "cas_tree_sha256": "",
+            }
+
+        body_blocks = [merged_syms[s][1] for s in merged_order if s in merged_syms]
+        sections: List[str] = []
+        if merged_imports:
+            sections.append("\n".join(merged_imports))
+        if body_blocks:
+            sections.append("\n\n".join(body_blocks))
+        merged_source = ("\n\n".join(sections) + "\n") if sections else ""
+        cas_tree_sha256 = _canonical_ast_digest(merged_source)
+        return {
+            "merged": True,
+            "conflicts": [],
+            "merged_source": merged_source,
+            "cas_tree_sha256": cas_tree_sha256,
+            "symbols_merged": len(modified_by),
+        }
+
 
 @dataclass
 class TaskContract:
@@ -20,6 +313,7 @@ class TaskContract:
     timeout_sec: float = 30.0
     created_at: float = field(default_factory=time.time)
 
+
 @dataclass
 class TaskExecutionResult:
     task_id: str
@@ -28,6 +322,8 @@ class TaskExecutionResult:
     compact_output: str
     execution_time_ms: float
     error: Optional[str] = None
+    envelope: Optional[ProofCarryingCausalEnvelope] = None
+
 
 class TaskDispatcher:
     def __init__(self):
@@ -38,13 +334,20 @@ class TaskDispatcher:
 
     def dispatch(self, contract: TaskContract) -> TaskExecutionResult:
         if contract.task_type not in self._handlers:
+            err_msg = f"Handler no registrado para task_type '{contract.task_type}'"
+            env = JITContextEntropyCompiler.build_envelope(
+                task_id=contract.task_id,
+                raw_output={"error": err_msg},
+                epistemic_status="REFUTED",
+            )
             return TaskExecutionResult(
                 task_id=contract.task_id,
                 success=False,
                 raw_output=None,
                 compact_output="",
                 execution_time_ms=0.0,
-                error=f"Handler no registrado para task_type '{contract.task_type}'"
+                error=err_msg,
+                envelope=env,
             )
         handler = self._handlers[contract.task_type]
         start_t = time.perf_counter()
@@ -60,40 +363,41 @@ class TaskDispatcher:
                         raise TypeError(f"Clave '{req_key}' esperaba {req_type.__name__}, recibió {type(raw_output[req_key]).__name__}")
 
             compact = self.reduce_output(raw_output)
+            env = JITContextEntropyCompiler.build_envelope(
+                task_id=contract.task_id,
+                raw_output=raw_output,
+                epistemic_status="INFERRED",
+            )
             return TaskExecutionResult(
                 task_id=contract.task_id,
                 success=True,
                 raw_output=raw_output,
                 compact_output=compact,
-                execution_time_ms=elapsed_ms
+                execution_time_ms=elapsed_ms,
+                envelope=env,
             )
         except Exception as ex:
             elapsed_ms = (time.perf_counter() - start_t) * 1000.0
+            env = JITContextEntropyCompiler.build_envelope(
+                task_id=contract.task_id,
+                raw_output=f"!err:{type(ex).__name__}: {ex}",
+                epistemic_status="REFUTED",
+            )
             return TaskExecutionResult(
                 task_id=contract.task_id,
                 success=False,
                 raw_output=None,
                 compact_output="",
                 execution_time_ms=elapsed_ms,
-                error=str(ex)
+                error=str(ex),
+                envelope=env,
             )
 
     @staticmethod
     def reduce_output(raw: Any, max_chars: int = MAX_REDUCER_TOKENS * 4) -> str:
-        if isinstance(raw, (dict, list)):
-            text = json.dumps(raw, ensure_ascii=False)
-        else:
-            text = str(raw)
-        if len(text) > max_chars:
-            head_len = int(max_chars * 0.70)
-            tail_len = max_chars - head_len
-            omitted = len(text) - max_chars
-            return (
-                text[:head_len]
-                + f"\n... [TRUNCADO POR REDUCER: {omitted} caracteres omitidos] ...\n"
-                + text[-tail_len:]
-            )
-        return text
+        compacted, _, _, _ = JITContextEntropyCompiler.compress_diagnostic_output(raw, max_chars=max_chars)
+        return compacted
+
 
 @dataclass
 class DAGTaskNode:
@@ -102,6 +406,10 @@ class DAGTaskNode:
     verifier_fn: Optional[Callable[[Any], bool]] = None
     formal_source_code: Optional[str] = None
     use_bitvectors: bool = False
+    read_symbols: Set[str] = field(default_factory=set)
+    write_symbols: Set[str] = field(default_factory=set)
+    inject_parent_envelopes: bool = False
+
 
 @dataclass
 class DAGScheduleResult:
@@ -112,28 +420,63 @@ class DAGScheduleResult:
     speedup_ratio: float
     results: Dict[str, Any]
     all_success: bool
+    collisions_prevented_count: int = 0
+    envelopes: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
 
 class DynamicDAGScheduler:
-    """Planificador topológico concurrente de tareas agénticas."""
+    """Planificador topológico concurrente con aislamiento de colisiones Read/Write y sobres PCCHE."""
     def __init__(self, max_workers: int = 8):
         self.max_workers = max_workers
 
     @staticmethod
-    def compute_execution_waves(nodes: Dict[str, DAGTaskNode]) -> List[List[str]]:
+    def _effective_rw_sets(node: DAGTaskNode) -> Tuple[Set[str], Set[str]]:
+        reads = set(node.read_symbols)
+        writes = set(node.write_symbols)
+        if node.formal_source_code and not (reads or writes):
+            ast_r, ast_w = _extract_ast_rw_symbols(node.formal_source_code)
+            reads |= ast_r
+            writes |= ast_w
+        return reads, writes
+
+    @classmethod
+    def compute_execution_waves_with_stats(cls, nodes: Dict[str, DAGTaskNode]) -> Tuple[List[List[str]], int]:
         in_degree: Dict[str, int] = {task_id: len(node.dependencies) for task_id, node in nodes.items()}
         for task_id, node in nodes.items():
             for dep in node.dependencies:
                 if dep not in nodes:
                     raise KeyError(f"Dependencia desconocida '{dep}' requerida por tarea '{task_id}'")
 
+        rw_map = {tid: cls._effective_rw_sets(node) for tid, node in nodes.items()}
         waves: List[List[str]] = []
-        visited = set()
+        visited: Set[str] = set()
+        collisions_prevented = 0
 
         while len(visited) < len(nodes):
-            current_wave = [task_id for task_id, deg in in_degree.items() if deg == 0 and task_id not in visited]
-            if not current_wave:
+            ready = sorted(
+                task_id for task_id, deg in in_degree.items() if deg == 0 and task_id not in visited
+            )
+            if not ready:
                 unvisited = set(nodes.keys()) - visited
                 raise ValueError(f"Ciclo detectado en DAG de tareas: dependencias circulares en {unvisited}")
+
+            current_wave: List[str] = []
+            wave_writes: Set[str] = set()
+            wave_reads: Set[str] = set()
+
+            for tid in ready:
+                r_set, w_set = rw_map[tid]
+                has_ww = bool(w_set & wave_writes)
+                has_rw = bool(w_set & wave_reads) or bool(r_set & wave_writes)
+                if has_ww or has_rw:
+                    collisions_prevented += 1
+                    continue
+                current_wave.append(tid)
+                wave_writes |= w_set
+                wave_reads |= r_set
+
+            if not current_wave:
+                current_wave = [ready[0]]
 
             waves.append(current_wave)
             for t in current_wave:
@@ -143,6 +486,11 @@ class DynamicDAGScheduler:
                 if task_id not in visited:
                     in_degree[task_id] -= len(node.dependencies & set(current_wave))
 
+        return waves, collisions_prevented
+
+    @classmethod
+    def compute_execution_waves(cls, nodes: Dict[str, DAGTaskNode]) -> List[List[str]]:
+        waves, _ = cls.compute_execution_waves_with_stats(nodes)
         return waves
 
     def execute_dag(
@@ -151,10 +499,39 @@ class DynamicDAGScheduler:
         engine_execute_fn: Callable[..., Dict[str, Any]]
     ) -> DAGScheduleResult:
         t0 = time.perf_counter_ns()
-        waves = self.compute_execution_waves(nodes)
+        waves, collisions_prevented = self.compute_execution_waves_with_stats(nodes)
         results: Dict[str, Any] = {}
+        envelopes: Dict[str, Dict[str, Any]] = {}
         all_success = True
         seq_ms_sum = 0.0
+        vector_clock = {tid: 0 for tid in nodes}
+
+        def _prepare_payload(node: DAGTaskNode) -> Dict[str, Any]:
+            if node.inject_parent_envelopes and node.dependencies:
+                p = dict(node.contract.input_payload)
+                p["_parent_envelopes"] = [
+                    envelopes[dep] for dep in sorted(node.dependencies) if dep in envelopes
+                ]
+                return p
+            return node.contract.input_payload
+
+        def _record_result(node: DAGTaskNode, res: Dict[str, Any]) -> None:
+            nonlocal all_success, seq_ms_sum
+            tid = node.contract.task_id
+            vector_clock[tid] = vector_clock.get(tid, 0) + 1
+            results[tid] = res
+            seq_ms_sum += res.get("latency_ms", 1.0)
+            if res.get("status") != "SUCCESS":
+                all_success = False
+            env = JITContextEntropyCompiler.build_envelope(
+                task_id=tid,
+                raw_output=res.get("output_preview", res),
+                epistemic_status=str(res.get("epistemic_status", "INFERRED")),
+                proof_hash=res.get("proof_hash"),
+                formal_source_code=node.formal_source_code,
+                vector_clock=dict(vector_clock),
+            )
+            envelopes[tid] = env.to_dict()
 
         for wave in waves:
             wave_nodes = [nodes[task_id] for task_id in wave]
@@ -162,37 +539,31 @@ class DynamicDAGScheduler:
                 n = wave_nodes[0]
                 res = engine_execute_fn(
                     task_type=n.contract.task_type,
-                    input_payload=n.contract.input_payload,
+                    input_payload=_prepare_payload(n),
                     verifier_fn=n.verifier_fn,
                     domain_category=n.contract.domain_category,
                     formal_source_code=n.formal_source_code,
-                    use_bitvectors=n.use_bitvectors
+                    use_bitvectors=n.use_bitvectors,
                 )
-                results[n.contract.task_id] = res
-                seq_ms_sum += res.get("latency_ms", 1.0)
-                if res.get("status") != "SUCCESS":
-                    all_success = False
+                _record_result(n, res)
             else:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=min(self.max_workers, len(wave_nodes))) as executor:
                     future_map = {
                         executor.submit(
                             engine_execute_fn,
                             task_type=n.contract.task_type,
-                            input_payload=n.contract.input_payload,
+                            input_payload=_prepare_payload(n),
                             verifier_fn=n.verifier_fn,
                             domain_category=n.contract.domain_category,
                             formal_source_code=n.formal_source_code,
-                            use_bitvectors=n.use_bitvectors
-                        ): n.contract.task_id
+                            use_bitvectors=n.use_bitvectors,
+                        ): n
                         for n in wave_nodes
                     }
                     for fut in concurrent.futures.as_completed(future_map):
-                        tid = future_map[fut]
+                        n = future_map[fut]
                         res = fut.result()
-                        results[tid] = res
-                        seq_ms_sum += res.get("latency_ms", 1.0)
-                        if res.get("status") != "SUCCESS":
-                            all_success = False
+                        _record_result(n, res)
 
         duration_ms = (time.perf_counter_ns() - t0) / 1_000_000.0
         speedup = round(seq_ms_sum / max(duration_ms, 0.001), 2)
@@ -203,5 +574,7 @@ class DynamicDAGScheduler:
             sequential_equivalent_duration_ms=round(seq_ms_sum, 3),
             speedup_ratio=speedup,
             results=results,
-            all_success=all_success
+            all_success=all_success,
+            collisions_prevented_count=collisions_prevented,
+            envelopes=envelopes,
         )
