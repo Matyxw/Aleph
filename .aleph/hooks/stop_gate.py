@@ -84,12 +84,44 @@ def evaluate_stop_gate(payload: Dict[str, Any]) -> Dict[str, Any]:
     i_fe = compute_epistemic_friction_index(retries, failures, novel, verified=verified)
     gate = _evaluate_pareto_distillation_gate(payload, verified, i_fe)
     pareto_ok = bool(gate.get("pareto_gate_approved", verified))
+
+    persisted_to_memory = False
+    promoted_rule_ids: list[str] = []
+    if pareto_ok and verified and (payload.get("persist_session_lesson") or payload.get("db_path")):
+        repo_root = Path(__file__).resolve().parents[2]
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        try:
+            from aleph_core.state.store import StateStore
+            from aleph_core.memory.bicameral import BicameralMemory
+            from aleph_core.evolution.demiurgo_loop import DemiurgoEvolutionEngine
+            db_path = Path(str(payload["db_path"])) if payload.get("db_path") else None
+            store = StateStore(db_path=db_path) if db_path else StateStore()
+            memory = BicameralMemory(store)
+            evo = DemiurgoEvolutionEngine(store, memory)
+            evo_res = evo.record_and_evolve_from_session_failure(
+                task_type=str(payload.get("task_type", "session_stop_gate")),
+                error_msg=str(payload.get("error_msg", f"epistemic_friction_retries={retries}")),
+                failed_payload=payload.get("failed_payload") if isinstance(payload.get("failed_payload"), dict) else {},
+                proposed_if=str(payload.get("if_condition", "Cuando surge fricción repetida en ejecución")),
+                proposed_then=str(payload.get("then_action", "Validar precondiciones y contrato AST antes de ejecutar")),
+                proposed_avoid=str(payload.get("avoid_anti_pattern", "Reintentos ciegos sin diagnóstico")),
+                category=str(payload.get("category", "Código")),
+                rule_id=str(gate.get("candidate_rule_id")) if gate.get("candidate_rule_id") else None,
+            )
+            persisted_to_memory = bool(evo_res.get("promoted"))
+            promoted_rule_ids = list(evo_res.get("promoted_rule_ids", []))
+        except Exception:
+            persisted_to_memory = False
+
     return {
         "distill_ready": verified,
         "epistemic_friction_index": i_fe,
         "should_distill_rule": verified and i_fe >= 0.85 and pareto_ok,
         "pareto_gate_approved": pareto_ok,
         "candidate_rule_id": gate.get("candidate_rule_id"),
+        "persisted_to_memory": persisted_to_memory,
+        "promoted_rule_ids": promoted_rule_ids,
         "exit_code": 0 if verified else 1,
         "hook": "Stop",
     }

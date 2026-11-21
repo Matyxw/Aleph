@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0.0",
+  "family": "gemini-4",
+  "tiers": {
+    "TIER_0_DETERMINISTIC_AST_CAS": {
+      "model_id": "local-ast-cas/python-z3",
+      "variant": "Local-Deterministic",
+      "max_tokens": 0,
+      "marginal_cost_usd": 0.0,
+      "delegation_mode": "local_deterministic_ast_cas"
+    },
+    "TIER_1_FIM_AUTOCOMPLETE": {
+      "model_id": "gemini-4-hydrogen",
+      "variant": "Hydrogen",
+      "max_tokens": 512,
+      "marginal_cost_usd": 0.0,
+      "delegation_mode": "subagent_fast_reactive"
+    },
+    "TIER_2_LIGHTWEIGHT_SOVEREIGN": {
+      "model_id": "gemini-4-neon",
+      "variant": "Neon",
+      "max_tokens": 2048,
+      "marginal_cost_usd": 0.0,
+      "delegation_mode": "subagent_balanced_code"
+    },
+    "TIER_3_SOVEREIGN_REASONER": {
+      "model_id": "gemini-4-argon",
+      "variant": "Argon",
+      "max_tokens": 4096,
+      "marginal_cost_usd": 0.0,
+      "delegation_mode": "primary_deep_reasoner"
+    }
+  }
+}

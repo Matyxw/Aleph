@@ -309,6 +309,20 @@ class AlephEngine:
                 "failure_count": fail_count,
             })
             self.state_store.record_task_completion(task_id, "FAILED", {"error": err_msg})
+            failure_claim = EpistemicClaim(
+                claim_id=f"fail_{uuid.uuid4().hex[:12]}",
+                description=f"Fallo de ejecución en {task_type}: {err_msg}",
+                payload={"input": input_payload, "error": err_msg, "proposed_rule": input_payload.get("proposed_rule") if isinstance(input_payload, dict) else None},
+                status=EpistemicStatus.REFUTED,
+                metadata={
+                    "task_id": task_id,
+                    "task_type": task_type,
+                    "defect_type": "RUNTIME_EXECUTION_FAILURE",
+                    "error": err_msg,
+                    "counterexample": input_payload,
+                },
+            )
+            self.state_store.save_claim(failure_claim)
             tripped = fail_count >= self.circuit_breaker.failure_threshold
             return {
                 "task_id": task_id,
@@ -1329,6 +1343,145 @@ class AlephUniversalMCPServer:
         "aleph_bitacora_vault_status_and_telemetry",
         "aleph_prove_omega_continual_self_improvement_hipporag2_titans_zero_forgetting_and_bitacora_vault",
     })
+    _SOVEREIGN_FAST_TOOLS: Tuple[Dict[str, Any], ...] = (
+        {
+            "name": "aleph_verify_and_repair",
+            "description": "Verifica formalmente código Python con SMT/ICP y repara automáticamente defectos mediante síntesis inductiva CEGIS (0% falsos positivos).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "source_code": {"type": "string", "description": "Código fuente de la función a verificar y auto-reparar."},
+                    "use_bitvectors": {"type": "boolean", "default": False}
+                },
+                "required": ["source_code"]
+            }
+        },
+        {
+            "name": "aleph_apply_semantic_patch",
+            "description": "Aplica un parche semántico en el AST validando previamente con el demostrador SMT que no introduce regresiones de seguridad.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "original_source": {"type": "string"},
+                    "target_function_name": {"type": "string"},
+                    "replacement_function_source": {"type": "string"},
+                    "target_file_path": {"type": "string"}
+                },
+                "required": ["original_source", "target_function_name", "replacement_function_source"]
+            }
+        },
+        {
+            "name": "aleph_run_optimality_tournament",
+            "description": "Ejecuta un Torneo de Optimalidad Global (REG-007) y Consejo de Guerra de 5 perspectivas para elegir la solución Pareto-Dominante #1.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "problem_domain": {"type": "string"},
+                    "candidates": {"type": "array", "items": {"type": "object"}}
+                },
+                "required": ["problem_domain", "candidates"]
+            }
+        },
+        {
+            "name": "aleph_bitacora_query_hipporag2_ppr",
+            "description": "Consulta las 350+ reglas aprendidas de la Bitácora compiladas nativamente dentro de El Aleph usando el motor híbrido HippoRAG 2 (Personalized PageRank sobre Grafo de Conocimiento + Okapi BM25 + EWC).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}, "top_k": {"type": "integer"}, "shard_filter": {"type": "string"}},
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "aleph_bitacora_enforce_pre_turn_gate",
+            "description": "Compuerta Pre-Turno Always-On: Audita código o planes de ingeniería contra las 350+ reglas internas de la Bitácora en El Aleph antes de ejecutar cambios.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"code_or_plan": {"type": "string"}, "top_k": {"type": "integer"}},
+                "required": ["code_or_plan"]
+            }
+        },
+        {
+            "name": "aleph_bitacora_learn_experiential_rule",
+            "description": "Aprende y consolida una nueva regla operativa (SI -> ENTONCES -> EVITAR) desde una experiencia o error usando Sorpresa de Titans + ExpeL + TextGrad y la sella en la cadena Merkle interna sin olvidar ninguna regla previa.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "friction_or_error": {"type": "string"},
+                    "si_clause": {"type": "string"},
+                    "entonces_clause": {"type": "string"},
+                    "evitar_clause": {"type": "string"},
+                    "shard": {"type": "string"},
+                    "persist_to_disk": {"type": "boolean"}
+                },
+                "required": ["friction_or_error", "si_clause", "entonces_clause", "evitar_clause"]
+            }
+        },
+        {
+            "name": "aleph_omega_dgm_alphaevolve_self_improve",
+            "description": "Ejecuta un ciclo completo de automejora continua SOTA (Darwin Gödel Machine + AlphaEvolve + HippoRAG 2 PPR + Titans + TextGrad + Voyager AST + CEGIS).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_description": {"type": "string"},
+                    "observed_friction": {"type": "string"},
+                    "persist_new_rule": {"type": "boolean"}
+                }
+            }
+        },
+        {
+            "name": "aleph_bitacora_vault_status_and_telemetry",
+            "description": "Devuelve el estado completo de la Bóveda Interna de Bitácora de El Aleph (350+ reglas activas, desglose por nodo, raíz Merkle SHA-256 y verificación de 0.0% olvido catastrófico).",
+            "inputSchema": {"type": "object", "properties": {}}
+        },
+        {
+            "name": "aleph_prove_omega_continual_self_improvement_hipporag2_titans_zero_forgetting_and_bitacora_vault",
+            "description": "Nivel 506 (v33.0.0 — REG-330): Certifica formalmente la Bóveda Interna de Bitácora (350+ reglas compiladas en El Aleph), recuperación asociativa HippoRAG 2 PPR, memorización Titans con momento, TextGrad, torneo evolutivo DGM + AlphaEvolve y 0.0% Catastrophic Forgetting (cadena Merkle SHA-256).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query_context": {"type": "string"},
+                    "min_required_rules": {"type": "integer"},
+                    "simulate_tamper_or_forgetting": {"type": "boolean"}
+                }
+            }
+        },
+        {
+            "name": "aleph_analyze_interprocedural_taint",
+            "description": "Analizador de Manchas Inter-Procedural (ICFG): rastrea flujos de datos no confiables desde Sources hacia Sinks a través de cadenas de llamadas multi-función.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"source_code": {"type": "string"}, "files_map": {"type": "object"}}
+            }
+        },
+        {
+            "name": "aleph_verify_deep_supabase_rls",
+            "description": "Demostrador Formal de Políticas RLS Profundas, Barreras de Vistas Invoker y Confinamiento SECURITY DEFINER en PostgreSQL/Supabase (CVE-2025-48757).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"sql_source": {"type": "string"}},
+                "required": ["sql_source"]
+            }
+        },
+        {
+            "name": "aleph_discover_or_invoke",
+            "description": "Meta-herramienta JIT Soberana (Progressive Disclosure): busca por BM25 ('discover'), inspecciona el JSON Schema completo ('describe') o invoca bajo demanda ('invoke') cualquiera de las 752 herramientas de El Aleph sin contaminar el contexto inicial.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["discover", "describe", "invoke"], "default": "discover"},
+                    "query": {"type": "string", "description": "Consulta BM25 cuando action='discover'."},
+                    "target_tool": {"type": "string", "description": "Nombre exacto de la herramienta destino cuando action='describe' o 'invoke'."},
+                    "arguments": {"type": "object", "description": "Argumentos JSON para pasar a target_tool cuando action='invoke'."},
+                    "top_k": {"type": "integer", "default": 8}
+                }
+            }
+        },
+    )
+    _SOVEREIGN_FAST_SCHEMA_MAP: Dict[str, Dict[str, Any]] = {
+        _t["name"]: _t.get("inputSchema", {}).get("properties", {})
+        for _t in _SOVEREIGN_FAST_TOOLS
+    }
+    _SOVEREIGN_TOOL_NAMES = frozenset(_SOVEREIGN_FAST_SCHEMA_MAP.keys())
     _COMPACT_TOOL_ORDER = (
         "aleph_verify_and_repair",
         "aleph_apply_semantic_patch",
@@ -8708,7 +8861,6 @@ class AlephUniversalMCPServer:
                 }
             elif method == "tools/list":
                 import os as _os
-                all_tools = self.get_tools_manifest()
                 query = params.get("query")
                 profile = str(params.get("profile") or _os.environ.get("ALEPH_MCP_PROFILE", "full")).lower()
                 if isinstance(query, str) and query.strip():
@@ -8717,9 +8869,15 @@ class AlephUniversalMCPServer:
                     except (TypeError, ValueError):
                         top_k = 10
                     filtered_tools = self.search_tools(query.strip(), top_k=top_k)
+                elif profile == "sovereign":
+                    filtered_tools = [dict(t) for t in self._SOVEREIGN_FAST_TOOLS]
                 elif profile == "core":
-                    filtered_tools = [t for t in all_tools if t["name"] in self._CORE_TOOL_NAMES]
+                    filtered_tools = [
+                        dict(t) for t in self._SOVEREIGN_FAST_TOOLS
+                        if t["name"] in self._CORE_TOOL_NAMES
+                    ]
                 elif profile == "compact":
+                    all_tools = self.get_tools_manifest()
                     try:
                         top_k = max(1, min(int(params.get("top_k", 10)), len(all_tools)))
                     except (TypeError, ValueError):
@@ -8740,7 +8898,7 @@ class AlephUniversalMCPServer:
                                 break
                     filtered_tools = compact_list[:top_k]
                 else:
-                    filtered_tools = all_tools
+                    filtered_tools = self.get_tools_manifest()
                 return {
                     "jsonrpc": "2.0",
                     "id": req_id,
@@ -8790,17 +8948,20 @@ class AlephUniversalMCPServer:
 
     def _dispatch_mcp_tool(self, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         cls = type(self)
-        if not hasattr(self, '_tool_schema_cache') or self._tool_schema_cache is None:
-            if cls._TOOL_SCHEMA_CACHE is None:
-                manifest = self.get_tools_manifest()
-                with cls._MANIFEST_CACHE_LOCK:
-                    if cls._TOOL_SCHEMA_CACHE is None:
-                        cls._TOOL_SCHEMA_CACHE = {
-                            t['name']: t.get('inputSchema', {}).get('properties', {})
-                            for t in manifest
-                        }
-            self._tool_schema_cache = cls._TOOL_SCHEMA_CACHE
-        args = _MCPDefaultArgsDict(args or {}, self._tool_schema_cache.get(tool_name))
+        schema_props = cls._SOVEREIGN_FAST_SCHEMA_MAP.get(tool_name)
+        if schema_props is None:
+            if not hasattr(self, '_tool_schema_cache') or self._tool_schema_cache is None:
+                if cls._TOOL_SCHEMA_CACHE is None:
+                    manifest = self.get_tools_manifest()
+                    with cls._MANIFEST_CACHE_LOCK:
+                        if cls._TOOL_SCHEMA_CACHE is None:
+                            cls._TOOL_SCHEMA_CACHE = {
+                                t['name']: t.get('inputSchema', {}).get('properties', {})
+                                for t in manifest
+                            }
+                self._tool_schema_cache = cls._TOOL_SCHEMA_CACHE
+            schema_props = self._tool_schema_cache.get(tool_name)
+        args = _MCPDefaultArgsDict(args or {}, schema_props)
         arguments = args
         if tool_name == "aleph_verify_and_repair":
             res = self.engine.verify_and_autorepair_code(
@@ -17204,6 +17365,68 @@ class AlephUniversalMCPServer:
             with tempfile.TemporaryDirectory(prefix="aleph_swarm50_") as tmp_wt:
                 gov = SwarmGovernor50(num_agents=n_agents, worktree_dir=tmp_wt)
                 return gov.simulate_concurrent_swarm(duration_seconds=dur_s)
+        elif tool_name == "aleph_discover_or_invoke":
+            action = str(args.get("action", "discover")).strip().lower()
+            if action == "discover":
+                q = str(args.get("query", "")).strip()
+                try:
+                    top_k = max(1, min(25, int(args.get("top_k", 8))))
+                except (TypeError, ValueError):
+                    top_k = 8
+                matches = self.search_tools(q, top_k=top_k) if q else [
+                    {
+                        "name": t["name"],
+                        "description": t.get("description", ""),
+                        "inputSchema": t.get("inputSchema", {}),
+                        "relevance_score": 1.0,
+                    }
+                    for t in self._SOVEREIGN_FAST_TOOLS[:top_k]
+                ]
+                return {
+                    "status": "DISCOVERED",
+                    "action": "discover",
+                    "query": q,
+                    "matches_count": len(matches),
+                    "total_catalog_tools": len(self.get_tools_manifest()),
+                    "tools": matches,
+                }
+            elif action == "describe":
+                target = str(args.get("target_tool", "")).strip()
+                if not target:
+                    return {"status": "ERROR", "action": "describe", "error": "target_tool is required"}
+                schema_obj = next((t for t in self._SOVEREIGN_FAST_TOOLS if t["name"] == target), None)
+                if schema_obj is None:
+                    schema_obj = next((t for t in self.get_tools_manifest() if t["name"] == target), None)
+                if schema_obj is None:
+                    return {
+                        "status": "NOT_FOUND",
+                        "action": "describe",
+                        "target_tool": target,
+                        "suggestions": self.search_tools(target, top_k=5),
+                    }
+                return {
+                    "status": "DESCRIBED",
+                    "action": "describe",
+                    "target_tool": target,
+                    "schema": schema_obj,
+                }
+            elif action == "invoke":
+                target = str(args.get("target_tool", "")).strip()
+                if not target:
+                    return {"status": "ERROR", "action": "invoke", "error": "target_tool is required"}
+                if target == "aleph_discover_or_invoke":
+                    return {"status": "ERROR", "action": "invoke", "error": "Recursive invocation of aleph_discover_or_invoke is forbidden"}
+                raw_target_args = args.get("arguments")
+                if not isinstance(raw_target_args, dict):
+                    raw_target_args = {}
+                result_payload = self._dispatch_mcp_tool(target, raw_target_args)
+                return {
+                    "status": "INVOKED",
+                    "action": "invoke",
+                    "target_tool": target,
+                    "result": result_payload,
+                }
+            return {"status": "ERROR", "action": action, "error": f"Unsupported action '{action}'. Use 'discover', 'describe', or 'invoke'."}
         else:
             dot_srv = self._get_dot_aleph_mcp_server()
             if self._dot_aleph_tool_names and tool_name in self._dot_aleph_tool_names:

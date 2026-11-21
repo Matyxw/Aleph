@@ -53,7 +53,7 @@ def cmd_antigravity_always_on(install_user_home: bool = False, start_daemon: boo
             "PYTHONUTF8": "1",
             "ALEPH_ALWAYS_ON": "1",
             "ALEPH_KERNEL_VERSION": "33.0.0",
-            "ALEPH_MCP_PROFILE": "core",
+            "ALEPH_MCP_PROFILE": "sovereign",
         },
         "trust": False,
         "alwaysAllow": list(SAFE_AUTO_APPROVE_TOOLS),
@@ -239,6 +239,7 @@ def cmd_durable_replay_bft_wave() -> int:
     return 0 if rep.proven_durable_replay_and_bft_wave_sound else 1
 
 def cmd_mcp_serve() -> int:
+    os.environ.setdefault("ALEPH_MCP_PROFILE", "sovereign")
     server = AlephUniversalMCPServer()
     server.serve_stdio()
     return 0

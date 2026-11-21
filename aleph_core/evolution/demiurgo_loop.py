@@ -200,6 +200,60 @@ class DemiurgoEvolutionEngine:
         self.store = store
         self.memory = memory
 
+    def record_and_evolve_from_session_failure(
+        self,
+        task_type: str,
+        error_msg: str,
+        failed_payload: Optional[Dict[str, Any]] = None,
+        proposed_if: str = "",
+        proposed_then: str = "",
+        proposed_avoid: str = "",
+        category: str = "Código",
+        rule_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Registra un fallo real de sesión como EpistemicClaim REFUTED y ejecuta el ciclo
+        evolutivo completo validado por ParetoRegressionEvolutionGate + AegisShield.
+        """
+        claim_id = f"session_fail_{uuid.uuid4().hex[:12]}"
+        payload_dict: Dict[str, Any] = dict(failed_payload or {})
+        if proposed_if and proposed_then and proposed_avoid:
+            proposed: Dict[str, Any] = {
+                "if_cond": proposed_if,
+                "then_act": proposed_then,
+                "avoid_pat": proposed_avoid,
+                "category": category,
+                "friction": f"Fallo en {task_type}: {error_msg}",
+            }
+            if rule_id:
+                proposed["rule_id"] = rule_id
+            payload_dict["proposed_rule"] = proposed
+
+        claim = EpistemicClaim(
+            claim_id=claim_id,
+            description=f"Fallo de sesión en {task_type}: {error_msg}",
+            payload=payload_dict,
+            status=EpistemicStatus.REFUTED,
+            metadata={
+                "task_type": task_type,
+                "defect_type": "SESSION_TRACE_FAILURE",
+                "error": error_msg,
+                "counterexample": failed_payload or {},
+            },
+        )
+        self.store.save_claim(claim)
+        report = self.run_self_improvement_cycle()
+        return {
+            "claim_id": claim_id,
+            "cycle_id": report.cycle_id,
+            "promoted": bool(report.new_rules_synthesized),
+            "promoted_rule_ids": list(report.new_rules_synthesized),
+            "pareto_gate_passed": report.pareto_gate_passed,
+            "regression_check_passed": report.regression_check_passed,
+            "regression_rate_pct": report.regression_rate_pct,
+            "rejected_mutations_count": report.rejected_mutations_count,
+        }
+
     def run_self_improvement_cycle(
         self,
         synthetic_friction_events: Optional[List[Dict[str, Any]]] = None
@@ -221,14 +275,28 @@ class DemiurgoEvolutionEngine:
         for rc in refuted_claims:
             defect = rc.metadata.get("defect_type", "VERIFICATION_FAILURE")
             cex = rc.metadata.get("counterexample", {})
-            events_to_process.append({
-                "category": "Código",
-                "priority": "Alta",
-                "friction": f"Claim {rc.claim_id} refutado ({defect}) con contraejemplo {cex}",
-                "if_cond": f"se implementa una función sujeta a {defect} ({rc.description})",
-                "then_act": f"declarar contrato explícito @requires/@ensures e inyectar guarda preventiva contra {cex}",
-                "avoid_pat": f"despachar código sin precondición formal verificada para {defect}"
-            })
+            proposed = rc.payload.get("proposed_rule") if isinstance(rc.payload, dict) else None
+            if isinstance(proposed, dict) and proposed.get("if_cond") and proposed.get("then_act") and proposed.get("avoid_pat"):
+                ev_item: Dict[str, Any] = {
+                    "category": str(proposed.get("category", "Código")),
+                    "priority": str(proposed.get("priority", "Alta")),
+                    "friction": str(proposed.get("friction", f"Claim {rc.claim_id} refutado ({defect})")),
+                    "if_cond": str(proposed["if_cond"]),
+                    "then_act": str(proposed["then_act"]),
+                    "avoid_pat": str(proposed["avoid_pat"]),
+                }
+                if proposed.get("rule_id"):
+                    ev_item["rule_id"] = str(proposed["rule_id"])
+                events_to_process.append(ev_item)
+            else:
+                events_to_process.append({
+                    "category": "Código",
+                    "priority": "Alta",
+                    "friction": f"Claim {rc.claim_id} refutado ({defect}) con contraejemplo {cex}",
+                    "if_cond": f"se implementa una función sujeta a {defect} ({rc.description})",
+                    "then_act": f"declarar contrato explícito @requires/@ensures e inyectar guarda preventiva contra {cex}",
+                    "avoid_pat": f"despachar código sin precondición formal verificada para {defect}"
+                })
 
         t_io = time.perf_counter_ns()
         existing_rules = self.memory.get_active_rules()

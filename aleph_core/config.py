@@ -26,7 +26,11 @@ SQLITE_TIMEOUT_SEC = 10.0
 Z3_SOLVER_TIMEOUT_MS = 45
 PBT_MAX_EXAMPLES = 150
 
-# Cost Routing Baseline (SparkOS / REG-002)
-BASELINE_MODEL = "gemini-4-argon"
+# Cost Routing & Gemini 4 Asymmetric Profiles (SparkOS / REG-002)
+LOCAL_DETERMINISTIC_ENGINE = "local-ast-cas/python-z3"
+GEMINI4_HYDROGEN_MODEL = "gemini-4-hydrogen"
+GEMINI4_NEON_MODEL = "gemini-4-neon"
+GEMINI4_ARGON_MODEL = "gemini-4-argon"
+BASELINE_MODEL = GEMINI4_ARGON_MODEL
 BASELINE_MARGINAL_COST_USD = 0.00
 ANTI_HYPE_MIN_SCORE = 65

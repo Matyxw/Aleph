@@ -34,6 +34,9 @@ def _route_jit_compute(prompt: str) -> Dict[str, Any]:
     node_alloc = alloc.get("allocations", {}).get("prompt", {})
     return {
         "assigned_compute_tier": node_alloc.get("tier", "TIER_2_LIGHTWEIGHT_SOVEREIGN"),
+        "selected_model": node_alloc.get("selected_model", "gemini-4-neon"),
+        "gemini4_variant": node_alloc.get("gemini4_variant", "Neon"),
+        "delegation_mode": node_alloc.get("delegation_mode", "subagent_balanced_code"),
         "jit_token_budget": int(node_alloc.get("token_budget", 1536)),
         "shannon_entropy_bits": float(node_alloc.get("shannon_entropy_bits", 0.0)),
         "static_catalog_avoided_tokens": max(0, 4096 - int(node_alloc.get("token_budget", 1536))),

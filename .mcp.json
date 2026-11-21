@@ -10,6 +10,7 @@
         "PYTHONUNBUFFERED": "1",
         "ALEPH_ALWAYS_ON": "1",
         "ALEPH_KERNEL_VERSION": "33.0.0",
+        "ALEPH_MCP_PROFILE": "sovereign",
         "ALEPH_UNIFIED_NODES": "NODE-01,NODE-02,NODE-03,NODE-04,NODE-05,NODE-06,DOT-ALEPH"
       },
       "trust": false,

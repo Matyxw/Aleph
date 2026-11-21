@@ -7,10 +7,81 @@ según entropía de Shannon y densidad estructural.
 """
 from collections import Counter
 from dataclasses import dataclass, asdict
+import json
 import math
+import os
+from pathlib import Path
 import re
 from typing import Dict, Any, Optional
-from aleph_core.config import BASELINE_MODEL, BASELINE_MARGINAL_COST_USD, ANTI_HYPE_MIN_SCORE
+from aleph_core.config import (
+    BASELINE_MODEL,
+    BASELINE_MARGINAL_COST_USD,
+    ANTI_HYPE_MIN_SCORE,
+    LOCAL_DETERMINISTIC_ENGINE,
+    GEMINI4_HYDROGEN_MODEL,
+    GEMINI4_NEON_MODEL,
+    GEMINI4_ARGON_MODEL,
+)
+
+DEFAULT_GEMINI4_TIER_PROFILES: Dict[str, Dict[str, Any]] = {
+    "TIER_0_DETERMINISTIC_AST_CAS": {
+        "model_id": LOCAL_DETERMINISTIC_ENGINE,
+        "variant": "Local-Deterministic",
+        "max_tokens": 0,
+        "marginal_cost_usd": 0.0,
+        "delegation_mode": "local_deterministic_ast_cas",
+    },
+    "TIER_1_FIM_AUTOCOMPLETE": {
+        "model_id": GEMINI4_HYDROGEN_MODEL,
+        "variant": "Hydrogen",
+        "max_tokens": 512,
+        "marginal_cost_usd": 0.0,
+        "delegation_mode": "subagent_fast_reactive",
+    },
+    "TIER_2_LIGHTWEIGHT_SOVEREIGN": {
+        "model_id": GEMINI4_NEON_MODEL,
+        "variant": "Neon",
+        "max_tokens": 2048,
+        "marginal_cost_usd": 0.0,
+        "delegation_mode": "subagent_balanced_code",
+    },
+    "TIER_3_SOVEREIGN_REASONER": {
+        "model_id": GEMINI4_ARGON_MODEL,
+        "variant": "Argon",
+        "max_tokens": 4096,
+        "marginal_cost_usd": 0.0,
+        "delegation_mode": "primary_deep_reasoner",
+    },
+}
+
+
+def load_gemini4_tier_profiles() -> Dict[str, Dict[str, Any]]:
+    """Carga los perfiles de enrutamiento cognitivo Gemini 4 desde env o .aleph/gemini4_models.json."""
+    profiles = {k: dict(v) for k, v in DEFAULT_GEMINI4_TIER_PROFILES.items()}
+    env_override = os.environ.get("ALEPH_GEMINI4_PROFILES_JSON", "").strip()
+    if env_override:
+        try:
+            parsed = json.loads(env_override)
+            tiers = parsed.get("tiers", parsed) if isinstance(parsed, dict) else {}
+            if isinstance(tiers, dict):
+                for tk, tv in tiers.items():
+                    if tk in profiles and isinstance(tv, dict):
+                        profiles[tk].update(tv)
+                return profiles
+        except Exception:
+            pass
+    cfg_path = Path(__file__).resolve().parents[2] / ".aleph" / "gemini4_models.json"
+    if cfg_path.exists():
+        try:
+            parsed = json.loads(cfg_path.read_text(encoding="utf-8"))
+            tiers = parsed.get("tiers", {})
+            if isinstance(tiers, dict):
+                for tk, tv in tiers.items():
+                    if tk in profiles and isinstance(tv, dict):
+                        profiles[tk].update(tv)
+        except Exception:
+            pass
+    return profiles
 
 
 @dataclass
@@ -41,6 +112,9 @@ class AsymmetricComputeAllocation:
     token_budget: int
     shannon_entropy_bits: float
     structural_complexity_score: float
+    selected_model: str = GEMINI4_ARGON_MODEL
+    gemini4_variant: str = "Argon"
+    delegation_mode: str = "primary_deep_reasoner"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -171,10 +245,10 @@ class SovereignCostRouter:
     ) -> Dict[str, Any]:
         """
         Orquestación Cognitiva Asimétrica sobre nodos de un DAG:
-        - TIER_0_DETERMINISTIC_AST_CAS (0 tokens LLM): chequeos mecánicos, hashes CAS o tags [AST]/[CAS]/[Z3_LOCAL].
-        - TIER_1_FIM_AUTOCOMPLETE (<= 512 tokens): ediciones locales de baja entropía.
-        - TIER_2_LIGHTWEIGHT_SOVEREIGN (<= 2048 tokens): lógica moderada / pruebas puntuales.
-        - TIER_3_SOVEREIGN_REASONER (presupuesto prioritario): síntesis formal Z3, arquitectura y auditoría crítica.
+        - TIER_0_DETERMINISTIC_AST_CAS (0 tokens LLM, local-ast-cas/python-z3): chequeos mecánicos, hashes CAS o tags [AST]/[CAS]/[Z3_LOCAL].
+        - TIER_1_FIM_AUTOCOMPLETE (<= 512 tokens, gemini-4-hydrogen): ediciones locales de baja entropía.
+        - TIER_2_LIGHTWEIGHT_SOVEREIGN (<= 2048 tokens, gemini-4-neon): lógica moderada / pruebas puntuales.
+        - TIER_3_SOVEREIGN_REASONER (presupuesto prioritario, gemini-4-argon): síntesis formal Z3, arquitectura y auditoría crítica.
         """
         if not nodes_prompts:
             return {
@@ -183,42 +257,60 @@ class SovereignCostRouter:
                 "total_token_budget": total_token_budget,
                 "naive_uniform_tokens": 0,
                 "token_savings_pct": 0.0,
+                "model_distribution": {},
             }
 
+        tier_profiles = load_gemini4_tier_profiles()
         raw_specs: Dict[str, Tuple[str, int, float, float]] = {}
         for nid, text in nodes_prompts.items():
             m = _structural_complexity_metrics(text)
             ent = m["shannon_entropy_bits"]
             comp = m["structural_complexity_score"]
             tok = m["token_count"]
+            markers = m["structural_markers"]
             upper = text.upper()
+            has_formal_deep = bool(re.search(r"\b(z3|smt|theorem|prover|deadlock|rls|taint|invariant)\b", upper, re.IGNORECASE))
 
             if "[CAS]" in upper or "[AST]" in upper or "[Z3_LOCAL]" in upper or (tok <= 12 and ent < 3.4 and comp < 0.35):
-                tier, desired = "TIER_0_DETERMINISTIC_AST_CAS", 0
-            elif tok < 45 and ent < 3.9 and comp < 0.45:
-                tier, desired = "TIER_1_FIM_AUTOCOMPLETE", 512
-            elif ent >= 4.2 or comp >= 0.50 or tok >= 120:
-                tier, desired = "TIER_3_SOVEREIGN_REASONER", min(4096, max(2048, tok * 8))
+                tier = "TIER_0_DETERMINISTIC_AST_CAS"
+                desired = int(tier_profiles[tier].get("max_tokens", 0))
+            elif tok < 45 and ent < 4.1 and markers <= 1 and comp < 0.55 and not has_formal_deep:
+                tier = "TIER_1_FIM_AUTOCOMPLETE"
+                desired = int(tier_profiles[tier].get("max_tokens", 512))
+            elif (ent >= 4.65 and comp >= 0.56) or comp >= 0.65 or tok >= 120 or (tok >= 25 and has_formal_deep):
+                tier = "TIER_3_SOVEREIGN_REASONER"
+                max_t = int(tier_profiles[tier].get("max_tokens", 4096))
+                desired = min(max_t, max(2048, tok * 8))
             else:
-                tier, desired = "TIER_2_LIGHTWEIGHT_SOVEREIGN", 1536
+                tier = "TIER_2_LIGHTWEIGHT_SOVEREIGN"
+                desired = min(1536, int(tier_profiles[tier].get("max_tokens", 2048)))
             raw_specs[nid] = (tier, desired, ent, comp)
 
         desired_sum = sum(v[1] for v in raw_specs.values())
         scale = min(1.0, float(total_token_budget) / max(1, desired_sum)) if desired_sum > total_token_budget else 1.0
 
         allocations: Dict[str, Dict[str, Any]] = {}
+        model_distribution: Dict[str, int] = {}
         total_allocated = 0
         for nid in sorted(raw_specs.keys()):
             tier, desired, ent, comp = raw_specs[nid]
             budget = 0 if desired == 0 else max(128, int(desired * scale))
+            prof = tier_profiles.get(tier, DEFAULT_GEMINI4_TIER_PROFILES["TIER_3_SOVEREIGN_REASONER"])
+            selected_model = str(prof.get("model_id", GEMINI4_ARGON_MODEL))
+            variant = str(prof.get("variant", "Argon"))
+            delegation_mode = str(prof.get("delegation_mode", "primary_deep_reasoner"))
             alloc = AsymmetricComputeAllocation(
                 node_id=nid,
                 tier=tier,
                 token_budget=budget,
                 shannon_entropy_bits=ent,
                 structural_complexity_score=comp,
+                selected_model=selected_model,
+                gemini4_variant=variant,
+                delegation_mode=delegation_mode,
             )
             allocations[nid] = alloc.to_dict()
+            model_distribution[selected_model] = model_distribution.get(selected_model, 0) + 1
             total_allocated += budget
 
         # Ajuste exacto si el redondeo superó total_token_budget
@@ -238,6 +330,7 @@ class SovereignCostRouter:
             "total_token_budget": total_token_budget,
             "naive_uniform_tokens": naive_uniform,
             "token_savings_pct": savings_pct,
+            "model_distribution": model_distribution,
         }
 
     @staticmethod

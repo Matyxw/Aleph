@@ -14,7 +14,8 @@
       "env": {
         "PYTHONUNBUFFERED": "1",
         "ALEPH_ALWAYS_ON": "1",
-        "ALEPH_KERNEL_VERSION": "33.0.0"
+        "ALEPH_KERNEL_VERSION": "33.0.0",
+        "ALEPH_MCP_PROFILE": "sovereign"
       },
       "trust": false,
       "timeout": 30000
