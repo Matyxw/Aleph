@@ -19,7 +19,7 @@
   "cli_commands_count": 404,
   "formal_levels_count": 506,
   "mcp_tools_count": 752,
-  "total_unit_tests_count": 1392,
+  "total_unit_tests_count": 1393,
   "pass_rate_pct": 100.0,
   "false_positive_rate_pct": 0.0,
   "merged_nodes": {
@@ -57,7 +57,7 @@
   "internal_bitacora_rules_count": 350,
   "catastrophic_forgetting_rate_pct": 0.0,
   "manifest_epoch": "V33.0-SOTA",
-  "core_unit_tests_count": 1283,
+  "core_unit_tests_count": 1284,
   "dot_aleph_unit_tests_count": 109,
   "skipped_tests_count": 9,
   "merkle_root_sha256": "0de647cd8475a29ff196acd473c4013e9db7dcca001e4561eba5ede498f71063",

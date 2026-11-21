@@ -3302,9 +3302,18 @@ def cmd_cleanliness(target_dir: str = ".") -> int:
 
 
 def cmd_ab_eval(argv_list: Optional[list] = None) -> int:
-    """Delega al arnés experimental A/B ab_eval/ab_harness.py."""
+    """Delega al arnés experimental A/B ab_eval/ab_harness.py o ejecuta el benchmark SOTA integrado."""
+    args = argv_list if argv_list is not None else sys.argv[2:]
+    if not args or args == ["--builtin-sota"]:
+        from ab_eval.ab_harness import run_builtin_sota_benchmark
+
+        rep = run_builtin_sota_benchmark()
+        compact = {k: v for k, v in rep.items() if k != "task_results"}
+        print(json.dumps(compact, indent=2, ensure_ascii=False))
+        return 0 if rep.get("mcnemar_p", 1.0) < 0.05 else 1
     from ab_eval.ab_harness import main as ab_main
-    return int(ab_main(argv_list if argv_list is not None else sys.argv[2:]))
+
+    return int(ab_main(args))
 
 
 def cmd_mcp_client() -> int:

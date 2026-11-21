@@ -7,6 +7,7 @@ Comprime logs repetitivos preservando stack traces, líneas de error y resúmene
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import re
 import sys
 from typing import Any, Dict, List
@@ -16,6 +17,27 @@ CRITICAL_LOG_RE = re.compile(
     r"(Traceback|Error:|Exception:|FAIL:|ERROR:|AssertionError|SyntaxError|WARNING|CRITICAL)",
     re.IGNORECASE,
 )
+
+
+def _build_pcche_telemetry(raw_out: str) -> Dict[str, Any]:
+    repo_root = Path(__file__).resolve().parents[2]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    try:
+        from aleph_core.router.dispatcher import JITContextEntropyCompiler
+    except ImportError:
+        return {}
+    env = JITContextEntropyCompiler.build_envelope(
+        task_id="post_tool_use",
+        raw_output=raw_out,
+        epistemic_status="OBSERVED",
+    )
+    return {
+        "cas_sha256": env.cas_sha256,
+        "bpe_tokens_raw": env.bpe_tokens_raw,
+        "bpe_tokens_compacted": env.bpe_tokens_compacted,
+        "bpe_token_savings_pct": round(max(0.0, (1.0 - env.compression_ratio) * 100.0), 2),
+    }
 
 
 def crush_log_lines(lines: List[str], max_head: int = 20, max_tail: int = 25) -> List[str]:
@@ -48,7 +70,7 @@ def evaluate_post_tool_use(payload: Dict[str, Any]) -> Dict[str, Any]:
     lines = out.splitlines()
     crushed = crush_log_lines(lines)
     compression_ratio = 1.0 - (len(crushed) / max(1, len(lines))) if lines else 0.0
-    return {
+    res: Dict[str, Any] = {
         "crushed_len": len(lines),
         "retained_lines_count": len(crushed),
         "compression_ratio": round(max(0.0, compression_ratio), 4),
@@ -56,6 +78,10 @@ def evaluate_post_tool_use(payload: Dict[str, Any]) -> Dict[str, Any]:
         "exit_code": 0,
         "hook": "PostToolUse",
     }
+    pcche = _build_pcche_telemetry(out)
+    if pcche:
+        res.update(pcche)
+    return res
 
 
 def main() -> int:

@@ -578,3 +578,197 @@ class DynamicDAGScheduler:
             collisions_prevented_count=collisions_prevented,
             envelopes=envelopes,
         )
+
+
+
+class CounterfactualFaultLocalizer:
+    """
+    Localización causal contrafactual sobre grafos de ejecución DAG y sobres PCCHE en O(|V| + |E|).
+    Distingue la raíz primaria del fallo de las víctimas en cascada y preserva sobres sanos reutilizables.
+    """
+
+    @staticmethod
+    def localize_dag_faults(
+        nodes: Dict[str, DAGTaskNode],
+        schedule_result: DAGScheduleResult,
+    ) -> Dict[str, Any]:
+        if nodes is None or schedule_result is None or not nodes:
+            return {
+                "all_healthy": True,
+                "root_cause_nodes": [],
+                "cascaded_victim_nodes": [],
+                "healthy_reusable_envelopes": [],
+                "blast_radius_pct": 0.0,
+                "reexecution_savings_pct": 0.0,
+            }
+
+        results = schedule_result.results if isinstance(schedule_result.results, dict) else {}
+        envelopes = schedule_result.envelopes if isinstance(schedule_result.envelopes, dict) else {}
+        failed_ids: Set[str] = {
+            tid for tid in nodes
+            if (results.get(tid) or {}).get("status") != "SUCCESS"
+        }
+        if not failed_ids:
+            reusable = sorted(tid for tid in nodes if tid in envelopes)
+            return {
+                "all_healthy": True,
+                "root_cause_nodes": [],
+                "cascaded_victim_nodes": [],
+                "healthy_reusable_envelopes": reusable,
+                "blast_radius_pct": 0.0,
+                "reexecution_savings_pct": 100.0 if reusable else 0.0,
+            }
+
+        rw_sets = {tid: DynamicDAGScheduler._effective_rw_sets(node) for tid, node in nodes.items()}
+        root_causes: List[str] = []
+        cascaded: List[str] = []
+
+        for tid in sorted(failed_ids):
+            node = nodes[tid]
+            dep_failed = any(dep in failed_ids for dep in node.dependencies)
+            r_set, _ = rw_sets.get(tid, (set(), set()))
+            sym_tainted = False
+            if not dep_failed:
+                for other_fid in failed_ids:
+                    if other_fid != tid and (r_set & rw_sets.get(other_fid, (set(), set()))[1]):
+                        sym_tainted = True
+                        break
+            if dep_failed or sym_tainted:
+                cascaded.append(tid)
+            else:
+                root_causes.append(tid)
+
+        tainted_downstream: Set[str] = set(failed_ids)
+        changed = True
+        while changed:
+            changed = False
+            for tid, node in nodes.items():
+                if tid not in tainted_downstream and any(dep in tainted_downstream for dep in node.dependencies):
+                    tainted_downstream.add(tid)
+                    changed = True
+
+        reusable = sorted(
+            tid for tid in nodes
+            if tid not in tainted_downstream and tid in envelopes
+        )
+        total_n = max(1, len(nodes))
+        return {
+            "all_healthy": False,
+            "root_cause_nodes": sorted(root_causes),
+            "cascaded_victim_nodes": sorted(cascaded),
+            "healthy_reusable_envelopes": reusable,
+            "blast_radius_pct": round((len(tainted_downstream) / total_n) * 100.0, 2),
+            "reexecution_savings_pct": round((len(reusable) / total_n) * 100.0, 2),
+        }
+
+
+class EphemeralCASWorktreeTransaction:
+    """
+    Sandbox transaccional AST-CAS en memoria para ediciones paralelas sin colisiones.
+    Aplica AegisShield, parseo AST, fusión 3-way determinista y rollback atómico ante conflicto o fallo.
+    """
+
+    def __init__(self, base_files: Optional[Dict[str, str]] = None):
+        self._base_files: Dict[str, str] = dict(base_files) if base_files is not None else {}
+        self._staged: Dict[str, Dict[str, str]] = {}
+
+    def cas_root(self, files_map: Optional[Dict[str, str]] = None) -> str:
+        src_map = self._base_files if files_map is None else files_map
+        items = [f"{k}:{hashlib.sha256(v.encode('utf-8')).hexdigest()}" for k, v in sorted(src_map.items())]
+        return hashlib.sha256("\n".join(items).encode("utf-8")).hexdigest()
+
+    def stage_agent_patch(self, agent_id: str, file_path: str, patched_source: str) -> Dict[str, Any]:
+        from aleph_core.security.aegis_shield import AegisShield
+
+        if not agent_id or not file_path or patched_source is None:
+            return {"staged": False, "reason": "INVALID_STAGE_INPUT"}
+
+        sec = AegisShield.scan_text(patched_source)
+        if not sec.safe:
+            return {
+                "staged": False,
+                "reason": f"AEGIS_BLOCKED:{sec.findings[0].rule_id if sec.findings else 'UNSAFE'}",
+            }
+
+        if file_path.endswith(".py"):
+            try:
+                ast.parse(patched_source)
+            except SyntaxError as exc:
+                return {"staged": False, "reason": f"SYNTAX_ERROR:{exc.msg}"}
+
+        self._staged.setdefault(file_path, {})[agent_id] = patched_source
+        digest = (
+            _canonical_ast_digest(patched_source)
+            if file_path.endswith(".py")
+            else hashlib.sha256(patched_source.encode("utf-8")).hexdigest()
+        )
+        return {
+            "staged": True,
+            "agent_id": agent_id,
+            "file_path": file_path,
+            "cas_sha256": digest,
+        }
+
+    def commit_all(self, verifier_fn: Optional[Callable[[Dict[str, str]], bool]] = None) -> Dict[str, Any]:
+        before_root = self.cas_root(self._base_files)
+        candidate_files: Dict[str, str] = dict(self._base_files)
+        conflicts: List[Dict[str, Any]] = []
+
+        for file_path, branches in sorted(self._staged.items()):
+            base_src = self._base_files.get(file_path, "")
+            if len(branches) == 1:
+                candidate_files[file_path] = next(iter(branches.values()))
+                continue
+            if file_path.endswith(".py"):
+                m_res = SemanticCASWorktreeMerger.merge_ast_branches(base_src, branches)
+                if not m_res.get("merged"):
+                    conflicts.extend(m_res.get("conflicts", [{"file": file_path, "reason": "MERGE_CONFLICT"}]))
+                else:
+                    candidate_files[file_path] = str(m_res.get("merged_source", ""))
+            else:
+                distinct = sorted(set(branches.values()))
+                if len(distinct) > 1:
+                    conflicts.append({"file": file_path, "branches": sorted(branches.keys()), "reason": "TEXT_COLLISION"})
+                elif distinct:
+                    candidate_files[file_path] = distinct[0]
+
+        if conflicts:
+            self._staged.clear()
+            return {
+                "committed": False,
+                "rolled_back": True,
+                "reason": "CONFLICT_DETECTED",
+                "conflicts": conflicts,
+                "before_cas_root": before_root,
+                "after_cas_root": self.cas_root(self._base_files),
+                "files": dict(self._base_files),
+            }
+
+        if verifier_fn is not None:
+            try:
+                ok = bool(verifier_fn(dict(candidate_files)))
+            except Exception as exc:
+                ok = False
+                conflicts.append({"reason": f"VERIFIER_EXCEPTION:{exc}"})
+            if not ok:
+                self._staged.clear()
+                return {
+                    "committed": False,
+                    "rolled_back": True,
+                    "reason": "VERIFIER_REJECTED",
+                    "conflicts": conflicts,
+                    "before_cas_root": before_root,
+                    "after_cas_root": self.cas_root(self._base_files),
+                    "files": dict(self._base_files),
+                }
+
+        self._base_files = candidate_files
+        self._staged.clear()
+        return {
+            "committed": True,
+            "rolled_back": False,
+            "before_cas_root": before_root,
+            "after_cas_root": self.cas_root(self._base_files),
+            "conflicts": [],
+            "files": dict(self._base_files),
+        }
