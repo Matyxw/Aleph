@@ -7,10 +7,13 @@ Clasifica el dominio técnico del prompt del usuario e identifica las compuertas
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 import re
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+_LOG = logging.getLogger(__name__)
 
 
 DOMAIN_KEYWORDS: Dict[str, List[str]] = {
@@ -20,6 +23,22 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
     "NODE-04_SECURITY_PQC": ["security", "oauth", "token", "hmac", "pqc", "taint", "ssrf", "xss", "injection"],
     "NODE-05_PAGERANK_REPO": ["pagerank", "repomap", "kv-cache", "rust", "miri", "verus", "lean", "chebyshev"],
 }
+
+
+def _run_executive_preflight(
+    prompt: str,
+    repo_root: Optional[str] = None,
+    changed_files: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    resolved_root = repo_root or str(Path(__file__).resolve().parents[2])
+    if resolved_root not in sys.path:
+        sys.path.insert(0, resolved_root)
+    try:
+        from aleph_core.router.executive_preflight import ExecutivePreflight
+        return ExecutivePreflight.analyze(prompt, repo_root=resolved_root, changed_files=changed_files)
+    except Exception as exc:
+        _LOG.debug("ExecutivePreflight fallback: %s", exc)
+        return {}
 
 
 def _route_jit_compute(prompt: str) -> Dict[str, Any]:
@@ -44,7 +63,8 @@ def _route_jit_compute(prompt: str) -> Dict[str, Any]:
 
 
 def evaluate_user_prompt(payload: Dict[str, Any]) -> Dict[str, Any]:
-    prompt = str(payload.get("prompt", ""))
+    safe_payload = payload if isinstance(payload, dict) else {}
+    prompt = str(safe_payload.get("prompt", ""))
     lower_prompt = prompt.lower()
     matched_domains: List[str] = []
     for domain, kws in DOMAIN_KEYWORDS.items():
@@ -64,6 +84,15 @@ def evaluate_user_prompt(payload: Dict[str, Any]) -> Dict[str, Any]:
     jit_info = _route_jit_compute(prompt)
     if jit_info:
         out.update(jit_info)
+    raw_changed = safe_payload.get("changed_files")
+    changed_list = [str(x) for x in raw_changed] if isinstance(raw_changed, (list, tuple)) else None
+    preflight = _run_executive_preflight(
+        prompt,
+        repo_root=str(safe_payload.get("repo_root")) if safe_payload.get("repo_root") else None,
+        changed_files=changed_list,
+    )
+    if preflight:
+        out.update(preflight)
     return out
 
 

@@ -291,26 +291,73 @@ def cmd_mine_spec(target_file: str) -> int:
     return 0
 
 
-def cmd_git_gate(repo_path: str = ".") -> int:
+def cmd_git_gate(
+    repo_path: str = ".",
+    changed_only: bool = False,
+    include_archive: bool = False,
+    explicit_files: Optional[list] = None,
+) -> int:
+    import os
+    import subprocess
     from aleph_core.verification import GitSovereignGate
-    r_path = Path(repo_path)
-    files_map = {}
-    for ext in ("*.py", "*.rs", "*.ts", "*.tsx", "*.vba", "*.bas"):
-        for f in r_path.rglob(ext):
-            if any(p in f.parts for p in ("__pycache__", ".git", "node_modules", "target")):
+
+    r_path = Path(repo_path).resolve()
+    files_map: Dict[str, str] = {}
+    valid_exts = (".py", ".rs", ".ts", ".tsx", ".vba", ".bas")
+    skip_dirs = {"__pycache__", ".git", "node_modules", "target"}
+    if not include_archive:
+        skip_dirs.add("research_archive")
+
+    if changed_only or explicit_files:
+        candidates: list = list(explicit_files or [])
+        if changed_only and not candidates:
+            proc = subprocess.run(
+                ["git", "-C", str(r_path), "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if proc.returncode == 0:
+                for line in proc.stdout.splitlines():
+                    if len(line) < 4:
+                        continue
+                    code = line[:2]
+                    if "D" in code:
+                        continue
+                    rel_part = line[3:].strip()
+                    if " -> " in rel_part:
+                        rel_part = rel_part.split(" -> ", 1)[1].strip()
+                    candidates.append(rel_part.strip('"'))
+        for rel in candidates:
+            fpath = Path(os.path.join(str(r_path), rel))
+            if not fpath.is_file() or not fpath.name.endswith(valid_exts):
+                continue
+            if any(p in fpath.parts for p in skip_dirs):
                 continue
             try:
-                files_map[str(f.relative_to(r_path))] = f.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
-                pass
+                files_map[str(fpath.relative_to(r_path))] = fpath.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+    else:
+        for ext in valid_exts:
+            for f in r_path.rglob(f"*{ext}"):
+                if any(p in f.parts for p in skip_dirs):
+                    continue
+                try:
+                    files_map[str(f.relative_to(r_path))] = f.read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    continue
+
     report = GitSovereignGate.audit_files_dict(files_map)
     print(json.dumps({
         "safe_to_commit": report.safe_to_commit,
+        "incremental_changed_only": bool(changed_only),
+        "archive_excluded": not include_archive,
         "inspected_files": report.inspected_files_count,
         "inspected_functions": report.inspected_functions_count,
         "blocking_defects": report.blocking_defects,
         "polyglot_violations": report.polyglot_violations,
-        "formal_proofs_passed": report.formal_proofs_passed
+        "formal_proofs_passed": report.formal_proofs_passed,
     }, indent=2, ensure_ascii=False))
     return 0 if report.safe_to_commit else 1
 
@@ -827,8 +874,16 @@ if __name__ == "__main__":
     elif cmd == "mine-spec" and len(sys.argv) > 2:
         sys.exit(cmd_mine_spec(sys.argv[2]))
     elif cmd == "git-gate":
-        target = sys.argv[2] if len(sys.argv) > 2 else "."
-        sys.exit(cmd_git_gate(target))
+        gg_args = sys.argv[2:]
+        changed_only = "--changed-only" in gg_args
+        include_archive = "--include-archive" in gg_args
+        explicit_files = None
+        for a in gg_args:
+            if a.startswith("--files="):
+                explicit_files = [x.strip() for x in a.split("=", 1)[1].split(",") if x.strip()]
+        positional = [a for a in gg_args if not a.startswith("-")]
+        target = positional[0] if positional else "."
+        sys.exit(cmd_git_gate(target, changed_only=changed_only, include_archive=include_archive, explicit_files=explicit_files))
     elif cmd == "equiv" and len(sys.argv) > 3:
         sys.exit(cmd_equiv(sys.argv[2], sys.argv[3]))
     elif cmd == "mutate" and len(sys.argv) > 2:

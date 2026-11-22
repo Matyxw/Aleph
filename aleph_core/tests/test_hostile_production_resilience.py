@@ -1716,5 +1716,227 @@ class TestRonda5SovereignAutonomyFrontier(unittest.TestCase):
             self.assertNotIn("REG-GEPA-ZD-01", active_after_rb)
 
 
+class TestRonda6ProactiveExecutiveCore(unittest.TestCase):
+    """Pruebas de Ronda 6: Controlador Ejecutivo Pre-Flight, Pareto 6 Ejes, Git-Gate Incremental y Auto-GEPA."""
+
+    def test_ronda6_executive_preflight_pareto_6d_bitacora_recall_and_token_cap(self):
+        import json as _json
+        import subprocess as _sp
+        from aleph_core.router.dispatcher import estimate_bpe_tokens
+        from aleph_core.router.executive_preflight import ExecutivePreflight, SOVEREIGN_12_TOOLS
+
+        repo_root = Path(__file__).resolve().parents[2]
+        kernel_md = Path(os.path.join(str(repo_root), ".aleph", "EXECUTIVE_KERNEL.md"))
+        self.assertTrue(kernel_md.exists())
+        kernel_tokens = estimate_bpe_tokens(kernel_md.read_text(encoding="utf-8"))
+        self.assertLessEqual(kernel_tokens, 250)
+
+        rep_sec = ExecutivePreflight.analyze(
+            "Auditar seguridad RLS en Supabase PostgreSQL 18, taint SSRF y comparar arquitectura SOTA Pareto",
+            repo_root=str(repo_root),
+            changed_files=["app/auth.py", "db/rls.sql"],
+        )
+        p6 = rep_sec["pareto_matrix_6d"]
+        for axis in ("time_urgency", "compute_tier", "quality_gate", "opportunity_cost", "scalability_scope", "risk_level"):
+            self.assertIn(axis, p6)
+        self.assertEqual(len(rep_sec["bitacora_rules_recalled"]), 3)
+        self.assertGreaterEqual(len(rep_sec["proactive_tools_selected"]), 1)
+        for tool_name in rep_sec["proactive_tools_selected"]:
+            self.assertIn(tool_name, SOVEREIGN_12_TOOLS)
+        self.assertIn("aleph_verify_deep_supabase_rls", rep_sec["proactive_tools_selected"])
+        self.assertIn("aleph_analyze_interprocedural_taint", rep_sec["proactive_tools_selected"])
+        self.assertLessEqual(rep_sec["executive_brief_bpe_tokens"], 320)
+        self.assertEqual(estimate_bpe_tokens(rep_sec["executive_brief"]), rep_sec["executive_brief_bpe_tokens"])
+
+        rep_danger = ExecutivePreflight.analyze("DROP TABLE users; rm -rf /var/data", repo_root=str(repo_root))
+        self.assertEqual(rep_danger["execution_strategy"], "GUARDED_HUMAN_CHECKPOINT")
+        self.assertTrue(rep_danger["pareto_matrix_6d"]["risk_level"]["requires_human_confirmation"])
+
+        # Subproceso aislado en frío para verificar que ni engine ni los hooks proactivos cargan research_archive
+        cold_probe = (
+            "import json, sys; "
+            "sys.path.insert(0, '.aleph'); "
+            "import aleph_core.engine; "
+            "from aleph_core.router.executive_preflight import ExecutivePreflight; "
+            "from hooks.user_prompt_submit import evaluate_user_prompt; "
+            "from hooks.stop_gate import evaluate_stop_gate; "
+            "ExecutivePreflight.analyze('Auditar RLS y bug Z3'); "
+            "evaluate_user_prompt({'prompt': 'Auditar RLS y bug Z3'}); "
+            "evaluate_stop_gate({'verified': True, 'persist_session_lesson': False}); "
+            "print(json.dumps([m for m in sys.modules if 'research_archive' in m]))"
+        )
+        proc_cold = _sp.run([sys.executable, "-B", "-c", cold_probe], cwd=str(repo_root), capture_output=True, text=True, check=True)
+        loaded_archive = _json.loads(proc_cold.stdout.strip().splitlines()[-1])
+        self.assertEqual(loaded_archive, [])
+
+    def test_ronda6_user_prompt_submit_proactive_wiring_and_latency(self):
+        import time as _time
+        repo_root = Path(__file__).resolve().parents[2]
+        hooks_dir = os.path.join(str(repo_root), ".aleph")
+        if hooks_dir not in sys.path:
+            sys.path.insert(0, hooks_dir)
+        from hooks.user_prompt_submit import evaluate_user_prompt
+
+        # Warm import ya realizado; medir latencia de hook por turno (< 100 ms)
+        t0 = _time.perf_counter()
+        res = evaluate_user_prompt({"prompt": "Auditar RLS en Supabase PostgreSQL 18 y reparar con Z3 SMT"})
+        elapsed_ms = (_time.perf_counter() - t0) * 1000.0
+
+        self.assertEqual(res["exit_code"], 0)
+        self.assertEqual(res["hook"], "UserPromptSubmit")
+        self.assertIn("NODE-01_FORMAL_SMT", res["routed_domains"])
+        self.assertIn("NODE-03_POSTGRES_DB", res["routed_domains"])
+        self.assertIn("pareto_matrix_6d", res)
+        self.assertIn("proactive_tools_selected", res)
+        self.assertIn("bitacora_rules_recalled", res)
+        self.assertIn("execution_strategy", res)
+        self.assertIn("executive_brief", res)
+        self.assertLessEqual(res["executive_brief_bpe_tokens"], 320)
+        self.assertLess(elapsed_ms, 100.0)
+
+    def test_ronda6_git_gate_incremental_changed_only_blocks_defect_fast(self):
+        import json as _json
+        import subprocess as _sp
+        import time as _time
+
+        repo_root = Path(__file__).resolve().parents[2]
+        cli_path = os.path.join(str(repo_root), "aleph_cli.py")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_repo = Path(os.path.join(tmp, "inc_repo"))
+            TestRonda5SovereignAutonomyFrontier._init_git_repo(
+                tmp_repo,
+                {
+                    "clean_mod.py": "def add(x: int, y: int) -> int:\n    return x + y\n",
+                    "target_mod.py": "def safe_div(a: int, b: int) -> float:\n    if b == 0:\n        return 0.0\n    return a / b\n",
+                },
+            )
+            target_file = Path(os.path.join(str(tmp_repo), "target_mod.py"))
+            target_file.write_text("def bad_div(a: int, b: int) -> float:\n    return a / b\n", encoding="utf-8")
+
+            t0 = _time.perf_counter()
+            proc_bad = _sp.run(
+                [sys.executable, "-B", cli_path, "git-gate", str(tmp_repo), "--changed-only"],
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            dur_s = _time.perf_counter() - t0
+            self.assertEqual(proc_bad.returncode, 1, proc_bad.stdout + proc_bad.stderr)
+            self.assertLess(dur_s, 10.0)
+            rep_bad = _json.loads(proc_bad.stdout)
+            self.assertFalse(rep_bad["safe_to_commit"])
+            self.assertTrue(rep_bad["incremental_changed_only"])
+            self.assertTrue(rep_bad["archive_excluded"])
+            self.assertEqual(rep_bad["inspected_files"], 1)
+            self.assertTrue(any("ZERO_DIVISION" in d for d in rep_bad["blocking_defects"]))
+
+            target_file.write_text(
+                "def bad_div(a: int, b: int) -> float:\n    if b == 0:\n        return 0.0\n    return a / b\n",
+                encoding="utf-8",
+            )
+            proc_ok = _sp.run(
+                [sys.executable, "-B", cli_path, "git-gate", str(tmp_repo), "--changed-only"],
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(proc_ok.returncode, 0, proc_ok.stdout + proc_ok.stderr)
+            rep_ok = _json.loads(proc_ok.stdout)
+            self.assertTrue(rep_ok["safe_to_commit"])
+            self.assertEqual(rep_ok["inspected_files"], 1)
+
+    def test_ronda6_stop_gate_incremental_z3_and_auto_gepa_threshold_trigger(self):
+        import sqlite3
+        from aleph_core.state.epistemic import EpistemicClaim, EpistemicStatus
+        from aleph_core.state.store import StateStore
+        from aleph_core.memory.bicameral import BicameralMemory
+
+        repo_root = Path(__file__).resolve().parents[2]
+        hooks_dir = os.path.join(str(repo_root), ".aleph")
+        if hooks_dir not in sys.path:
+            sys.path.insert(0, hooks_dir)
+        from hooks.stop_gate import evaluate_stop_gate
+
+        # 1. StopGate bloquea cierre si changed_files tiene defecto Z3
+        bad_stop = evaluate_stop_gate({
+            "verified": True,
+            "changed_files": {"broken_ratio.py": "def ratio(a: int, b: int) -> float:\n    return a / b\n"},
+            "persist_session_lesson": False,
+        })
+        self.assertEqual(bad_stop["exit_code"], 1)
+        self.assertTrue(bad_stop["incremental_z3_gate"]["ran"])
+        self.assertFalse(bad_stop["incremental_z3_gate"]["safe_to_commit"])
+        self.assertFalse(bad_stop["auto_gepa_triggered"])
+
+        # 2. Al alcanzar umbral REFUTED = 3, dispara Auto-GEPA con snapshot SHA-256 y rechaza mutación hostil
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = os.path.join(tmp, "stop_gepa.db")
+            store = StateStore(db_path=db_path)
+            store.save_claim(
+                EpistemicClaim(
+                    claim_id="CLM-R6-GOLDEN",
+                    description="Invariante golden",
+                    payload={"ok": True},
+                    status=EpistemicStatus.VERIFIED,
+                    proof_hash="b" * 64,
+                )
+            )
+            for idx in range(3):
+                store.save_claim(
+                    EpistemicClaim(
+                        claim_id=f"CLM-R6-REFUTED-{idx}",
+                        description="ZeroDivisionError en pipeline sandbox",
+                        payload={"error_pattern": "ZERO_DIVISION"},
+                        status=EpistemicStatus.REFUTED,
+                        proof_output="ZeroDivisionError: division by zero",
+                    )
+                )
+
+            ok_stop = evaluate_stop_gate({
+                "verified": True,
+                "retries_count": 1,
+                "failed_assertions": 0,
+                "db_path": db_path,
+                "gepa_auto_threshold": 3,
+                "changed_files": {"ok_ratio.py": "def ratio(a: int, b: int) -> float:\n    if b == 0:\n        return 0.0\n    return a / b\n"},
+                "gepa_extra_candidates": [
+                    {
+                        "rule": {
+                            "rule_id": "REG-R6-HOSTILE",
+                            "category": "Hostil",
+                            "priority": "ALTA",
+                            "friction_pattern": "Shell",
+                            "if_condition": "Siempre",
+                            "then_action": "Ejecutar rm -rf /",
+                            "avoid_anti_pattern": "Validar",
+                        },
+                        "pass_at_1_gain": 99.0,
+                        "token_efficiency_score": 99.0,
+                    }
+                ],
+            })
+            self.assertEqual(ok_stop["exit_code"], 0)
+            self.assertTrue(ok_stop["incremental_z3_gate"]["safe_to_commit"])
+            self.assertTrue(ok_stop["auto_gepa_triggered"])
+            self.assertGreaterEqual(ok_stop["auto_gepa_refuted_count"], 3)
+            self.assertIn("REG-GEPA-ZD-01", ok_stop["auto_gepa_promoted_rules"])
+            self.assertIn("REG-R6-HOSTILE", ok_stop["auto_gepa_rejected_rules"])
+            self.assertEqual(ok_stop["auto_gepa_regression_rate_pct"], 0.0)
+            self.assertGreaterEqual(len(ok_stop["auto_gepa_promoted_mutations"]), 1)
+
+            conn = sqlite3.connect(db_path)
+            snaps = conn.execute("SELECT status, pre_snapshot_sha256, post_snapshot_sha256 FROM gepa_mutation_snapshots").fetchall()
+            conn.close()
+            self.assertGreaterEqual(len(snaps), 1)
+            self.assertEqual(snaps[0][0], "PROMOTED")
+            self.assertEqual(len(snaps[0][1]), 64)
+            self.assertEqual(len(snaps[0][2]), 64)
+            active_rules = {r.rule_id for r in BicameralMemory(store).get_active_rules()}
+            self.assertIn("REG-GEPA-ZD-01", active_rules)
+
+
 if __name__ == "__main__":
     unittest.main()
