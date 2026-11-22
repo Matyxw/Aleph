@@ -252,7 +252,7 @@ class TestDotAlephSovereignSuite(unittest.TestCase):
         self.assertEqual(cert["schema_version"], "33.0.0-SOTA-SOVEREIGN")
         file_hashes = cert["file_hashes_sha256"]
         self.assertGreaterEqual(len(file_hashes), 100)
-        excluded_parts = {".git", "__pycache__", ".pytest_cache"}
+        excluded_parts = {".git", "__pycache__", ".pytest_cache", "runtime"}
         excluded_rels = {".aleph-cert.json", ".github/workflows/ci.yml"}
         disk_rels = {
             p.relative_to(_ROOT).as_posix()

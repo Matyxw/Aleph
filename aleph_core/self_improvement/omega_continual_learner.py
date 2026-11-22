@@ -843,13 +843,14 @@ class AlephOmegaContinualSelfImprovementEngine:
         """
         violations: List[str] = []
         prev_hash = "0" * 64
+        sha256_fn = hashlib.sha256
         for idx, r in enumerate(self.rules, 1):
             if not r.immutable_locked:
                 violations.append(f"Regla {r.canon_id} no tiene bloqueo inmutable anti-olvido.")
             if r.ewc_fisher_importance < 1.0:
                 violations.append(f"Regla {r.canon_id} tiene peso EWC {r.ewc_fisher_importance} < 1.0.")
             expected_payload = f"{prev_hash}|{r.canon_id}|{r.reg_id}|{r.shard}|{r.regla_op}"
-            expected_hash = hashlib.sha256(expected_payload.encode("utf-8")).hexdigest()
+            expected_hash = sha256_fn(expected_payload.encode("utf-8")).hexdigest()
             if r.prev_merkle_hash != prev_hash or r.merkle_hash != expected_hash:
                 violations.append(
                     f"Ruptura de cadena Merkle en índice {idx} ({r.canon_id}): "

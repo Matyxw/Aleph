@@ -3,6 +3,7 @@ import json
 import unittest
 from dataclasses import asdict
 from aleph_core.verification.z3_prover import *
+from aleph_core.research_archive.z3_provers_archive import *
 from aleph_core.verification.pbt_fallback import PropertyBasedFallback
 from aleph_core.verification.ast_smt import *
 from aleph_core.verification.contracts import *

@@ -388,19 +388,27 @@ class TestHostileProductionResilience(unittest.TestCase):
 
         root = Path(__file__).resolve().parents[2]
 
-        # 1. Verificación Formal Real (758/758 *Prover usan Z3 SMT + bitwise/pow AST->SMT)
-        z3_src = (root / "aleph_core" / "verification" / "z3_prover.py").read_text(encoding="utf-8")
-        z3_lines = z3_src.splitlines()
-        z3_tree = _ast.parse(z3_src)
-        prover_classes = [n for n in z3_tree.body if isinstance(n, _ast.ClassDef) and n.name.endswith("Prover")]
-        self.assertEqual(len(prover_classes), 758)
-        classes_with_z3 = [
-            cls.name for cls in prover_classes
-            if any(
-                k in "\n".join(z3_lines[cls.lineno - 1 : (cls.end_lineno or cls.lineno)])
-                for k in ("z3.", "Solver(", "unsat", "BitVec(")
-            )
+        # 1. Verificación Formal Real (758/758 *Prover en Cubo A + Cubo B diferido usan Z3 SMT + bitwise/pow AST->SMT)
+        z3_paths = [
+            root / "aleph_core" / "verification" / "z3_prover.py",
+            root / "aleph_core" / "research_archive" / "z3_provers_archive.py",
         ]
+        prover_classes = []
+        classes_with_z3 = []
+        for zp_path in z3_paths:
+            src_txt = zp_path.read_text(encoding="utf-8")
+            src_lines = src_txt.splitlines()
+            src_tree = _ast.parse(src_txt)
+            cls_nodes = [n for n in src_tree.body if isinstance(n, _ast.ClassDef) and n.name.endswith("Prover")]
+            prover_classes.extend(cls_nodes)
+            classes_with_z3.extend(
+                cls.name for cls in cls_nodes
+                if any(
+                    k in "\n".join(src_lines[cls.lineno - 1 : (cls.end_lineno or cls.lineno)])
+                    for k in ("z3.", "Solver(", "unsat", "BitVec(")
+                )
+            )
+        self.assertEqual(len(prover_classes), 758)
         self.assertEqual(len(classes_with_z3), 758)
 
         if HAS_Z3:
@@ -1241,6 +1249,129 @@ class TestRonda3SovereignContextGemini4Evolution(unittest.TestCase):
             self.assertEqual(r2["epistemic_status"], EpistemicStatus.VERIFIED.value)
             self.assertIn("REG-ZDG-001", r2["active_rules_applied"])
             self.assertIn("deployed", str(r2["output_preview"]))
+
+
+class TestRonda4MonolithExtractionAndLiveAntigravity(unittest.TestCase):
+    def test_ronda4_engine_sovereign_handshake_never_loads_research_archive(self):
+        import json
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+        code = (
+            "import json, os, sys; "
+            "os.environ['ALEPH_MCP_PROFILE'] = 'sovereign'; "
+            "from aleph_core.engine import AlephUniversalMCPServer; "
+            "srv = AlephUniversalMCPServer(); "
+            "resp = srv.handle_jsonrpc_request({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}); "
+            "arch = [k for k in sys.modules if k.startswith('aleph_core.research_archive')]; "
+            "print(json.dumps({'tools': len(resp['result']['tools']), 'arch': arch}))"
+        )
+        p = subprocess.run([sys.executable, "-B", "-c", code], cwd=str(root), capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        data = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertEqual(data["tools"], 12)
+        self.assertEqual(data["arch"], [])
+
+    def test_ronda4_z3_prover_and_git_gate_never_loads_z3_provers_archive(self):
+        import json
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+        code = (
+            "import json, sys; "
+            "from aleph_core.verification.z3_prover import GitSovereignGate, Z3VerificationEngine, SupabaseDeepRLSAndSecurityDefinerProver; "
+            "rep = GitSovereignGate.audit_files_dict({'ok.py': 'def add(a: int, b: int) -> int:\\n    return a + b\\n'}); "
+            "cold_arch = 'aleph_core.research_archive.z3_provers_archive' in sys.modules; "
+            "from aleph_core.verification.z3_prover import ZeroDowntimeDDLProver; "
+            "lazy_arch = 'aleph_core.research_archive.z3_provers_archive' in sys.modules; "
+            "print(json.dumps({'safe': rep.safe_to_commit, 'cold_arch': cold_arch, 'lazy_arch': lazy_arch, 'prover_loaded': ZeroDowntimeDDLProver is not None}))"
+        )
+        p = subprocess.run([sys.executable, "-B", "-c", code], cwd=str(root), capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        data = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertTrue(data["safe"])
+        self.assertFalse(data["cold_arch"])
+        self.assertTrue(data["lazy_arch"])
+        self.assertTrue(data["prover_loaded"])
+
+    def test_ronda4_jit_discover_or_invoke_loads_archive_on_demand_and_executes_cubo_b_tool(self):
+        import json
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+        code = (
+            "import json, sys; "
+            "from aleph_core.engine import AlephUniversalMCPServer; "
+            "srv = AlephUniversalMCPServer(); "
+            "cold_arch = [k for k in sys.modules if k.startswith('aleph_core.research_archive')]; "
+            "inv = srv.handle_jsonrpc_request({'jsonrpc': '2.0', 'id': 77, 'method': 'tools/call', 'params': {'name': 'aleph_discover_or_invoke', 'arguments': {'action': 'invoke', 'target_tool': 'aleph_audit_asymptotic_complexity', 'arguments': {'source_code': 'def f(xs):\\n    return sum(xs)\\n'}}}}); "
+            "warm_arch = sorted(k for k in sys.modules if k.startswith('aleph_core.research_archive')); "
+            "res = json.loads(inv['result']['content'][0]['text']); "
+            "print(json.dumps({'cold_arch': cold_arch, 'warm_arch': warm_arch, 'status': res['status'], 'res_keys': sorted(res['result'].keys())}))"
+        )
+        p = subprocess.run([sys.executable, "-B", "-c", code], cwd=str(root), capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        data = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertEqual(data["cold_arch"], [])
+        self.assertIn("aleph_core.research_archive.mcp_dispatch_archive", data["warm_arch"])
+        self.assertEqual(data["status"], "INVOKED")
+        self.assertGreater(len(data["res_keys"]), 0)
+
+    def test_ronda4_stop_gate_auto_persists_only_on_verified_friction(self):
+        import sys
+        import tempfile
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+        dot_aleph = str(root / ".aleph")
+        if dot_aleph not in sys.path:
+            sys.path.insert(0, dot_aleph)
+        from hooks.stop_gate import evaluate_stop_gate
+        from aleph_core.state.store import StateStore
+        from aleph_core.memory.bicameral import BicameralMemory
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            db_ok = Path(tmp) / "auto_friction.db"
+            # 1. Fricción real verificada SIN persist_session_lesson=True explícito -> debe persistir automáticamente
+            res_auto = evaluate_stop_gate({
+                "verified": True,
+                "retries_count": 2,
+                "failed_assertions": 1,
+                "db_path": str(db_ok),
+                "candidate_rule_id": "REG-STOP-AUTO-01",
+                "if_condition": "Cuando aparece fricción en migración DDL",
+                "then_action": "Ejecutar Expand-Contract con timeout explícito",
+                "avoid_anti_pattern": "Alterar columnas en vivo sin guarda",
+            })
+            self.assertTrue(res_auto["persisted_to_memory"])
+            self.assertIn("REG-STOP-AUTO-01", res_auto["promoted_rule_ids"])
+            rules = BicameralMemory(StateStore(db_path=db_ok)).get_active_rules()
+            self.assertIn("REG-STOP-AUTO-01", {r.rule_id for r in rules})
+
+            # 2. Cero fricción (retries == 0 and failures == 0) usando default runtime -> NO debe persistir
+            res_zero = evaluate_stop_gate({"verified": True, "retries_count": 0, "failed_assertions": 0})
+            self.assertFalse(res_zero["persisted_to_memory"])
+
+            # 3. verified == False -> pareto_gate_approved == False -> NO debe persistir incluso con retries > 0
+            res_fail = evaluate_stop_gate({"verified": False, "retries_count": 2, "failed_assertions": 1, "db_path": str(Path(tmp) / "no_fail.db")})
+            self.assertFalse(res_fail["pareto_gate_approved"])
+            self.assertFalse(res_fail["persisted_to_memory"])
+
+            # 4. Opt-out explícito persist_session_lesson=False -> NO debe persistir
+            res_optout = evaluate_stop_gate({
+                "verified": True,
+                "retries_count": 2,
+                "failed_assertions": 1,
+                "persist_session_lesson": False,
+                "db_path": str(Path(tmp) / "no_optout.db"),
+            })
+            self.assertFalse(res_optout["persisted_to_memory"])
 
 
 if __name__ == "__main__":

@@ -10,5 +10,6 @@ __pycache__/
 *.journal.jsonl
 .aleph/events.jsonl
 .aleph/data/
+.aleph/runtime/
 .bitacora_vault.lock
 node_modules/

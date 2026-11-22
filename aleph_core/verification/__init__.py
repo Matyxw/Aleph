@@ -1593,3 +1593,16 @@ __all__ = [
     "eBPFVerifierTristateAbstractDomainAndXDPBoundsProver",
     "eBPFVerifierTristateAndXDPBoundsReport",
 ]
+
+def __getattr__(name: str):
+    if name.startswith("__") and name.endswith("__"):
+        raise AttributeError(name)
+    from . import z3_prover as _zp
+    val = getattr(_zp, name)
+    globals()[name] = val
+    return val
+
+
+def __dir__():
+    from . import z3_prover as _zp
+    return sorted(set(globals().keys()) | set(__all__) | set(dir(_zp)))

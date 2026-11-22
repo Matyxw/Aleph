@@ -46,7 +46,7 @@ def scan_repository_hygiene(root_dir: Path) -> Dict[str, Any]:
     py_files_checked = 0
 
     for path in sorted(root_dir.rglob("*")):
-        if ".git" in path.parts or "__pycache__" in path.parts or "node_modules" in path.parts:
+        if ".git" in path.parts or "__pycache__" in path.parts or "node_modules" in path.parts or "runtime" in path.parts:
             continue
         if not path.is_file():
             continue

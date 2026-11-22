@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 import sys
 from typing import Any, Dict, Optional
@@ -86,8 +87,21 @@ def evaluate_stop_gate(payload: Dict[str, Any]) -> Dict[str, Any]:
     pareto_ok = bool(gate.get("pareto_gate_approved", verified))
 
     persisted_to_memory = False
+    persisted_db_path: Optional[str] = None
     promoted_rule_ids: list[str] = []
-    if pareto_ok and verified and (payload.get("persist_session_lesson") or payload.get("db_path")):
+    has_real_friction = (retries > 0 or failures > 0)
+    disable_env = os.environ.get("ALEPH_DISABLE_STOP_PERSIST", "").strip() in ("1", "true", "TRUE")
+    explicit_flag = payload.get("persist_session_lesson")
+    should_persist = (
+        pareto_ok
+        and verified
+        and not disable_env
+        and (
+            explicit_flag is True
+            or (explicit_flag is not False and (has_real_friction or bool(payload.get("db_path"))))
+        )
+    )
+    if should_persist:
         repo_root = Path(__file__).resolve().parents[2]
         if str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
@@ -95,8 +109,12 @@ def evaluate_stop_gate(payload: Dict[str, Any]) -> Dict[str, Any]:
             from aleph_core.state.store import StateStore
             from aleph_core.memory.bicameral import BicameralMemory
             from aleph_core.evolution.demiurgo_loop import DemiurgoEvolutionEngine
-            db_path = Path(str(payload["db_path"])) if payload.get("db_path") else None
-            store = StateStore(db_path=db_path) if db_path else StateStore()
+            if payload.get("db_path"):
+                db_path = Path(str(payload["db_path"]))
+            else:
+                db_path = repo_root / ".aleph" / "runtime" / "session_evolution.db"
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            store = StateStore(db_path=db_path)
             memory = BicameralMemory(store)
             evo = DemiurgoEvolutionEngine(store, memory)
             evo_res = evo.record_and_evolve_from_session_failure(
@@ -111,6 +129,8 @@ def evaluate_stop_gate(payload: Dict[str, Any]) -> Dict[str, Any]:
             )
             persisted_to_memory = bool(evo_res.get("promoted"))
             promoted_rule_ids = list(evo_res.get("promoted_rule_ids", []))
+            if persisted_to_memory:
+                persisted_db_path = str(db_path)
         except Exception:
             persisted_to_memory = False
 
@@ -121,6 +141,7 @@ def evaluate_stop_gate(payload: Dict[str, Any]) -> Dict[str, Any]:
         "pareto_gate_approved": pareto_ok,
         "candidate_rule_id": gate.get("candidate_rule_id"),
         "persisted_to_memory": persisted_to_memory,
+        "persisted_db_path": persisted_db_path,
         "promoted_rule_ids": promoted_rule_ids,
         "exit_code": 0 if verified else 1,
         "hook": "Stop",
