@@ -760,6 +760,24 @@ def cmd_mcp_client() -> int:
     return 0
 
 
+def cmd_autonomous_run() -> int:
+    """Delega al runner autónomo durable (CORTE 3)."""
+    from aleph_core.autonomous.runner import cli_autonomous_run
+    return cli_autonomous_run(sys.argv[2:])
+
+
+def cmd_autonomous_queue() -> int:
+    """Delega a la cola durable multi-ticket (CORTE 3)."""
+    from aleph_core.autonomous.runner import cli_autonomous_queue
+    return cli_autonomous_queue(sys.argv[2:])
+
+
+def cmd_evolve_gepa() -> int:
+    """Delega al optimizador reflexivo GEPA con rollback SHA-256 (CORTE 4)."""
+    from aleph_core.evolution.gepa_optimizer import cli_evolve_gepa
+    return cli_evolve_gepa(sys.argv[2:])
+
+
 def __getattr__(name: str):
     if name.startswith("cmd_"):
         from aleph_core.research_archive import cli_archive as _ca
@@ -847,6 +865,12 @@ if __name__ == "__main__":
         sys.exit(cmd_ab_eval())
     elif cmd == "mcp-client":
         sys.exit(cmd_mcp_client())
+    elif cmd == "autonomous-run":
+        sys.exit(cmd_autonomous_run())
+    elif cmd == "autonomous-queue":
+        sys.exit(cmd_autonomous_queue())
+    elif cmd == "evolve-gepa":
+        sys.exit(cmd_evolve_gepa())
     else:
         from aleph_core.research_archive.cli_archive import dispatch_archived_cli_command
         rc = dispatch_archived_cli_command(cmd, sys.argv)
