@@ -241,9 +241,15 @@ class Gemini4AsymmetricAdapter:
         node_alloc = alloc["allocations"][node_id]
         tier_aliases = {
             "TIER_0": "TIER_0_DETERMINISTIC_AST_CAS",
-            "TIER_1": "TIER_1_FAST_REACTIVE",
-            "TIER_2": "TIER_2_BALANCED_BUILDER",
+            "TIER_0_DETERMINISTIC_AST_CAS": "TIER_0_DETERMINISTIC_AST_CAS",
+            "TIER_1": "TIER_1_FIM_AUTOCOMPLETE",
+            "TIER_1_FAST_REACTIVE": "TIER_1_FIM_AUTOCOMPLETE",
+            "TIER_1_FIM_AUTOCOMPLETE": "TIER_1_FIM_AUTOCOMPLETE",
+            "TIER_2": "TIER_2_LIGHTWEIGHT_SOVEREIGN",
+            "TIER_2_BALANCED_BUILDER": "TIER_2_LIGHTWEIGHT_SOVEREIGN",
+            "TIER_2_LIGHTWEIGHT_SOVEREIGN": "TIER_2_LIGHTWEIGHT_SOVEREIGN",
             "TIER_3": "TIER_3_SOVEREIGN_REASONER",
+            "TIER_3_SOVEREIGN_REASONER": "TIER_3_SOVEREIGN_REASONER",
         }
         raw_tier = forced_tier or str(node_alloc["tier"])
         tier = tier_aliases.get(raw_tier, raw_tier)

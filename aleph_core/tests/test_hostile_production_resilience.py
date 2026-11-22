@@ -1457,30 +1457,56 @@ class TestRonda5SovereignAutonomyFrontier(unittest.TestCase):
             store = StateStore(db_path=db_path)
             adapter = Gemini4AsymmetricAdapter(
                 store=store,
-                session_token_budget=1200,
+                session_token_budget=4000,
                 max_calls_budget=10,
                 provider_mode="auto",
             )
 
             # TIER_0: resuelto 100% local sin tokens LLM
             r0 = adapter.execute_node("n0", "lint syntax check", forced_tier="TIER_0")
-            self.assertTrue(r0.tier.startswith("TIER_0"))
+            self.assertEqual(r0.tier, "TIER_0_DETERMINISTIC_AST_CAS")
+            self.assertEqual(r0.selected_model, "local-ast-cas/python-z3")
             self.assertEqual(r0.used_tokens, 0)
             self.assertEqual(r0.provider, "local_ast_cas_z3")
 
-            # TIER_2/3: llamada determinista trazada (o live si hubiera credenciales)
+            # TIER_1: Hydrogen (fast autocomplete / reactive)
+            r1 = adapter.execute_node("n1", "Completar docstring breve", forced_tier="TIER_1", task_token_budget=300)
+            self.assertEqual(r1.tier, "TIER_1_FIM_AUTOCOMPLETE")
+            self.assertEqual(r1.selected_model, "gemini-4-hydrogen")
+            self.assertGreater(r1.used_tokens, 0)
+
+            # TIER_2: Neon (balanced lightweight builder)
             r2 = adapter.execute_node(
-                "n1",
-                "Realizar síntesis arquitectónica compleja de concurrencia distribuida y invariantes formales",
+                "n2",
+                "Realizar síntesis arquitectónica compleja de concurrencia distribuida e invariantes formales",
                 forced_tier="TIER_2",
                 task_token_budget=500,
             )
-            self.assertTrue(r2.tier.startswith("TIER_2"))
+            self.assertEqual(r2.tier, "TIER_2_LIGHTWEIGHT_SOVEREIGN")
+            self.assertEqual(r2.selected_model, "gemini-4-neon")
             self.assertGreater(r2.used_tokens, 0)
 
+            # TIER_3: Argon (deep sovereign reasoner)
+            r3 = adapter.execute_node(
+                "n3",
+                "Auditar formalmente invariantes distribuidos y pruebas de terminación Z3",
+                forced_tier="TIER_3",
+                task_token_budget=800,
+            )
+            self.assertEqual(r3.tier, "TIER_3_SOVEREIGN_REASONER")
+            self.assertEqual(r3.selected_model, "gemini-4-argon")
+            self.assertGreater(r3.used_tokens, 0)
+
+            # Compatibilidad con ambos nombres largos históricos
+            r1_alias = adapter.execute_node("n1_alias", "Chequear estilo corto", forced_tier="TIER_1_FAST_REACTIVE", task_token_budget=300)
+            self.assertEqual(r1_alias.selected_model, "gemini-4-hydrogen")
+            r2_alias = adapter.execute_node("n2_alias", "Refactorizar helper", forced_tier="TIER_2_BALANCED_BUILDER", task_token_budget=500)
+            self.assertEqual(r2_alias.selected_model, "gemini-4-neon")
+
+            expected_tokens = r1.used_tokens + r2.used_tokens + r3.used_tokens + r1_alias.used_tokens + r2_alias.used_tokens
             summary = adapter.get_telemetry_summary()
-            self.assertEqual(summary["total_calls"], 2)
-            self.assertEqual(summary["total_tokens"], r2.used_tokens)
+            self.assertEqual(summary["total_calls"], 6)
+            self.assertEqual(summary["total_tokens"], expected_tokens)
 
             # Presupuesto estricto debe disparar BudgetExceededError
             tight = Gemini4AsymmetricAdapter(store=store, session_token_budget=5, max_calls_budget=10)
@@ -1490,7 +1516,7 @@ class TestRonda5SovereignAutonomyFrontier(unittest.TestCase):
             conn = sqlite3.connect(db_path)
             cnt = conn.execute("SELECT COUNT(*) FROM llm_routing_telemetry").fetchone()[0]
             conn.close()
-            self.assertEqual(cnt, 2)
+            self.assertEqual(cnt, 6)
 
     def test_ronda5_autonomous_runner_crash_resume_and_queue_locking(self):
         from aleph_core.autonomous.runner import (
