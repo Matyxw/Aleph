@@ -16,7 +16,7 @@ import os
 import sys
 from dataclasses import asdict
 import unittest
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from pathlib import Path
 
 from aleph_core.engine import AlephEngine, AlephUniversalMCPServer
@@ -38,15 +38,161 @@ SAFE_AUTO_APPROVE_TOOLS = [
 ]
 
 
-def cmd_antigravity_always_on(install_user_home: bool = False, start_daemon: bool = False) -> int:
+def _build_sovereign_agents_md() -> str:
+    return (
+        "---\n"
+        "description: Kernel Ejecutivo El Aleph v33.0.0 Sovereign (JIT, Pareto 6D, Bitácora, Z3, Auto-GEPA)\n"
+        "always-active: true\n"
+        "---\n"
+        "<el_aleph_sovereign_mandate>\n"
+        "El Aleph v33.0.0 Sovereign (MCP el-aleph-sovereign, CLI aleph). Activación proactiva sin esperar orden:\n"
+        "1. Autoconciencia JIT (perfil sovereign): aleph_verify_and_repair, aleph_apply_semantic_patch, "
+        "aleph_run_optimality_tournament, aleph_bitacora_query_hipporag2_ppr, aleph_bitacora_enforce_pre_turn_gate, "
+        "aleph_bitacora_learn_experiential_rule, aleph_omega_dgm_alphaevolve_self_improve, "
+        "aleph_bitacora_vault_status_and_telemetry, aleph_analyze_interprocedural_taint, aleph_verify_deep_supabase_rls "
+        "y aleph_discover_or_invoke (discover/invoke para UI/UX, RepoMap, DDL, SSRF).\n"
+        "2. Orquestación Proactiva: aplicá Top-3 Bitácora pre-turno y git-gate --changed-only Z3 antes de responder.\n"
+        "3. Pareto 6 Ejes: optimizá Tiempo, Esfuerzo/Cómputo, Calidad, Costo Oportunidad, Escalabilidad y Riesgo.\n"
+        "4. Cero-Mediocridad: cero placeholders TODO/pass; elegí SOTA Pareto-dominante.\n"
+        "5. Meta-Bucle: auto-auditá y habilitá auto-GEPA (0% regresión, SHA-256). trust:false: checkpoint humano SOLO en acciones destructivas.\n"
+        "</el_aleph_sovereign_mandate>\n"
+    )
+
+
+def _build_sovereign_skill_md() -> str:
+    return (
+        "---\n"
+        "name: el-aleph-sovereign\n"
+        "description: Kernel formal y cognitivo El Aleph v33.0.0 Sovereign. Activar AUTOMÁTICAMENTE sin esperar mención explícita ante UI/UX (via aleph_discover_or_invoke), verificación formal Z3 SMT, Bóveda Bitácora, auditoría AST/Taint o PostgreSQL 18 / Supabase RLS.\n"
+        "---\n"
+        "# El Aleph v33.0.0 Sovereign — Perfil `sovereign` (12 Tools + Despacho JIT)\n\n"
+        "Activá estas herramientas proactivamente en `ServerName: \"el-aleph-sovereign\"`:\n\n"
+        "## 1. Herramientas Soberanas Activas Directas\n"
+        "- **Verificación y Reparación Z3:** `aleph_verify_and_repair`, `aleph_apply_semantic_patch`\n"
+        "- **Seguridad y Bases de Datos:** `aleph_analyze_interprocedural_taint`, `aleph_verify_deep_supabase_rls`\n"
+        "- **Bóveda Bitácora y Auto-Evolución:** `aleph_bitacora_query_hipporag2_ppr`, `aleph_bitacora_enforce_pre_turn_gate`, `aleph_bitacora_learn_experiential_rule`, `aleph_omega_dgm_alphaevolve_self_improve`, `aleph_bitacora_vault_status_and_telemetry`\n"
+        "- **Optimalidad Pareto:** `aleph_run_optimality_tournament`\n\n"
+        "## 2. Motores Especializados bajo Demanda (`aleph_discover_or_invoke`)\n"
+        "Para **UI/UX (`aleph_design_create`, `aleph_design_compile`, `aleph_design_audit`, `aleph_audit_and_repair_design_tokens_wcag`)**, **PageRank RepoMap (`aleph_build_pagerank_repomap`)**, **DDL Zero-Downtime (`aleph_verify_zero_downtime_ddl`)**, **SSRF** o **Equivalencia Relacional**:\n"
+        "1. Descubrí parámetros exactos con `aleph_discover_or_invoke` (`{\"action\": \"discover\", \"query\": \"design ui wcag\"}`)\n"
+        "2. Ejecutá con `aleph_discover_or_invoke` (`{\"action\": \"invoke\", \"tool_name\": \"...\", \"arguments\": {...}}`)\n"
+    )
+
+
+def _build_antigravity_hooks_payload(py_exe: str, server_script: str) -> Dict[str, Any]:
+    return {
+        "el-aleph-sovereign": {
+            "enabled": True,
+            "SessionStart": [
+                {"type": "command", "command": f'"{py_exe}" "{server_script}" --hook SessionStart', "timeout": 15}
+            ],
+            "PreInvocation": [
+                {"type": "command", "command": f'"{py_exe}" "{server_script}" --hook PreInvocation', "timeout": 15}
+            ],
+            "PreToolUse": [
+                {
+                    "matcher": ".*",
+                    "hooks": [
+                        {"type": "command", "command": f'"{py_exe}" "{server_script}" --hook PreToolUse', "timeout": 15}
+                    ],
+                }
+            ],
+            "PostToolUse": [
+                {
+                    "matcher": ".*",
+                    "hooks": [
+                        {"type": "command", "command": f'"{py_exe}" "{server_script}" --hook PostToolUse', "timeout": 15}
+                    ],
+                }
+            ],
+            "Stop": [
+                {"type": "command", "command": f'"{py_exe}" "{server_script}" --hook Stop', "timeout": 15}
+            ],
+        }
+    }
+
+
+def _sync_sovereign_agents_dir(
+    agents_dir: Path,
+    server_entry: Dict[str, Any],
+    py_exe: str,
+    hook_server_script: str,
+    sync_json: bool = False,
+) -> list:
+    import os
+    import shutil
+
+    updated: list = []
+    plugin_dir = Path(os.path.join(str(agents_dir), "plugins", "el-aleph-sovereign"))
+    rules_dir = Path(os.path.join(str(plugin_dir), "rules"))
+    skills_dir = Path(os.path.join(str(plugin_dir), "skills", "el-aleph-sovereign"))
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    skills_dir.mkdir(parents=True, exist_ok=True)
+
+    agents_md = Path(os.path.join(str(rules_dir), "AGENTS.md"))
+    agents_md.write_text(_build_sovereign_agents_md(), encoding="utf-8")
+    updated.append(str(agents_md))
+
+    skill_md = Path(os.path.join(str(skills_dir), "SKILL.md"))
+    skill_md.write_text(_build_sovereign_skill_md(), encoding="utf-8")
+    updated.append(str(skill_md))
+
+    # Eliminar duplicados obsoletos fuera del plugin para mantener una única fuente de verdad
+    dup_skill_dir = Path(os.path.join(str(agents_dir), "skills", "el-aleph-sovereign"))
+    if dup_skill_dir.exists():
+        shutil.rmtree(dup_skill_dir, ignore_errors=True)
+    dup_rule = Path(os.path.join(str(agents_dir), "rules", "el-aleph.md"))
+    if dup_rule.is_file():
+        try:
+            dup_rule.unlink()
+        except OSError as exc:
+            print(f"[warn] no se pudo limpiar regla duplicada {dup_rule}: {exc}", file=sys.stderr)
+
+    if sync_json:
+        plugin_json = Path(os.path.join(str(plugin_dir), "plugin.json"))
+        plugin_json.write_text(json.dumps({
+            "name": "el-aleph-sovereign",
+            "version": "33.0.0",
+            "description": "El Aleph v33.0.0 Sovereign Kernel (12 Sovereign Tools + aleph_discover_or_invoke JIT, Pareto 6D, Z3 Incremental & Auto-GEPA).",
+            "mcpServers": "./mcp_config.json",
+            "hooks": "./hooks.json",
+            "rules": ["./rules/AGENTS.md"],
+            "skills": ["./skills"],
+        }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        mcp_json = Path(os.path.join(str(plugin_dir), "mcp_config.json"))
+        mcp_json.write_text(json.dumps({"mcpServers": {"el-aleph-sovereign": server_entry}}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        hooks_payload = _build_antigravity_hooks_payload(py_exe, hook_server_script)
+        plugin_hooks = Path(os.path.join(str(plugin_dir), "hooks.json"))
+        plugin_hooks.write_text(json.dumps(hooks_payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        updated.append(str(plugin_hooks))
+        dup_root_hooks = Path(os.path.join(str(agents_dir), "hooks.json"))
+        if dup_root_hooks.is_file():
+            try:
+                dup_root_hooks.unlink()
+            except OSError as exc:
+                print(f"[warn] no se pudo limpiar hooks duplicado {dup_root_hooks}: {exc}", file=sys.stderr)
+    return updated
+
+
+def cmd_antigravity_always_on(
+    install_user_home: bool = False,
+    start_daemon: bool = False,
+    sync_plugins_and_hooks: bool = False,
+) -> int:
     """
     Configura e instala El Aleph v33.0.0 en modo Always-On para Google Antigravity,
     Gemini CLI, Project IDX y clientes MCP compatibles.
     """
+    import os
+
     base_dir = Path(__file__).resolve().parent
-    cli_abs = str(base_dir / "aleph_cli.py")
+    installed_kernel = Path(os.path.join(str(Path.home()), "el-aleph-sovereign"))
+    runtime_dir = installed_kernel if (installed_kernel.exists() and Path(os.path.join(str(installed_kernel), "aleph_cli.py")).exists()) else base_dir
+    cli_abs = os.path.join(str(runtime_dir), "aleph_cli.py")
+    hook_server_abs = os.path.join(str(runtime_dir), ".aleph", "lib", "aleph_mcp_server.py")
+    py_exe = sys.executable or "python3"
     server_entry = {
-        "command": sys.executable or "python3",
+        "command": py_exe,
         "args": [cli_abs, "mcp-stdio"],
         "env": {
             "PYTHONUNBUFFERED": "1",
@@ -61,17 +207,17 @@ def cmd_antigravity_always_on(install_user_home: bool = False, start_daemon: boo
     }
     installed_paths = []
     for rel_cfg in [".mcp.json", ".antigravity/mcp_config.json", ".gemini/settings.json"]:
-        p = base_dir / rel_cfg
+        p = Path(os.path.join(str(base_dir), rel_cfg))
         if p.exists():
             installed_paths.append(str(p))
 
     if install_user_home:
         home = Path.home()
         user_targets = [
-            home / ".gemini" / "settings.json",
-            home / ".gemini" / "config" / "mcp_config.json",
-            home / ".gemini" / "antigravity" / "mcp_config.json",
-            home / ".config" / "antigravity" / "mcp_config.json",
+            Path(os.path.join(str(home), ".gemini", "settings.json")),
+            Path(os.path.join(str(home), ".gemini", "config", "mcp_config.json")),
+            Path(os.path.join(str(home), ".gemini", "antigravity", "mcp_config.json")),
+            Path(os.path.join(str(home), ".config", "antigravity", "mcp_config.json")),
         ]
         for ut in user_targets:
             try:
@@ -82,7 +228,7 @@ def cmd_antigravity_always_on(install_user_home: bool = False, start_daemon: boo
                         existing = json.loads(ut.read_text(encoding="utf-8"))
                     except Exception:
                         existing = {}
-                if "mcpServers" not in existing or not isinstance(existing["mcpServers"], dict):
+                if "mcpServers" not in existing or not isinstance(existing.get("mcpServers"), dict):
                     existing["mcpServers"] = {}
                 existing["mcpServers"].pop("aleph-omega", None)
                 prev_entry = existing["mcpServers"].get("el-aleph-sovereign")
@@ -90,14 +236,44 @@ def cmd_antigravity_always_on(install_user_home: bool = False, start_daemon: boo
                 target_entry["env"] = dict(server_entry["env"])
                 if isinstance(prev_entry, dict):
                     if prev_entry.get("command"):
-                        target_entry["command"] = prev_entry["command"]
-                    if isinstance(prev_entry.get("args"), list) and prev_entry["args"]:
-                        target_entry["args"] = prev_entry["args"]
+                        target_entry["command"] = prev_entry.get("command")
+                    if isinstance(prev_entry.get("args"), list) and prev_entry.get("args"):
+                        target_entry["args"] = prev_entry.get("args")
                 existing["mcpServers"]["el-aleph-sovereign"] = target_entry
                 ut.write_text(json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
                 installed_paths.append(str(ut))
             except Exception:
                 pass
+
+        # Mantener sincronizados AGENTS.md y SKILL.md soberanos en ~/.agents (sin añadir JSON inesperados salvo con sync_plugins_and_hooks)
+        installed_paths.extend(
+            _sync_sovereign_agents_dir(
+                Path(os.path.join(str(home), ".agents")),
+                server_entry,
+                py_exe,
+                hook_server_abs,
+                sync_json=sync_plugins_and_hooks,
+            )
+        )
+        if sync_plugins_and_hooks:
+            global_hooks = Path(os.path.join(str(home), ".gemini", "config", "hooks.json"))
+            global_hooks.parent.mkdir(parents=True, exist_ok=True)
+            global_hooks.write_text(
+                json.dumps(_build_antigravity_hooks_payload(py_exe, hook_server_abs), indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            installed_paths.append(str(global_hooks))
+            win_sys32_agents = Path(os.path.join("C:", os.sep, "Windows", "System32", ".agents"))
+            if win_sys32_agents.exists():
+                installed_paths.extend(
+                    _sync_sovereign_agents_dir(
+                        win_sys32_agents,
+                        server_entry,
+                        py_exe,
+                        hook_server_abs,
+                        sync_json=True,
+                    )
+                )
 
     report = {
         "status": "ANTIGRAVITY_ALWAYS_ON_ACTIVE",
@@ -106,7 +282,7 @@ def cmd_antigravity_always_on(install_user_home: bool = False, start_daemon: boo
         "mcp_tools_count": 752,
         "formal_classes_count": 1580,
         "configured_files": installed_paths,
-        "stdio_command": f"{sys.executable or 'python3'} {cli_abs} mcp-stdio",
+        "stdio_command": f"{py_exe} {cli_abs} mcp-stdio",
         "http_daemon": "desactivado por defecto; arrancar a mano con `mcp-http` (exige Bearer token, ver .aleph/.mcp_token)",
     }
     print(json.dumps(report, indent=2, ensure_ascii=False))
@@ -858,7 +1034,8 @@ if __name__ == "__main__":
         td = sys.argv[2] if len(sys.argv) > 2 else "Ciclo autónomo DGM + AlphaEvolve + HippoRAG 2 + Titans"
         sys.exit(cmd_omega_self_improve(td))
     elif cmd in ("antigravity-always-on", "antigravity-setup"):
-        sys.exit(cmd_antigravity_always_on(install_user_home=("--install-user-home" in sys.argv), start_daemon=("--daemon" in sys.argv)))
+        do_home = "--install-user-home" in sys.argv
+        sys.exit(cmd_antigravity_always_on(install_user_home=do_home, start_daemon=("--daemon" in sys.argv), sync_plugins_and_hooks=do_home))
     elif cmd == "test":
         sys.exit(cmd_test(core_only=("--core-only" in sys.argv[2:] or "--fast" in sys.argv[2:])))
     elif cmd == "benchmark":

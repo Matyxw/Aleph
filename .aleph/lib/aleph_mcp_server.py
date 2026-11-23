@@ -1068,23 +1068,111 @@ class AlephIDEHooksRunner:
 
     def run_hook(self, event_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Dispatches a hook event and returns a structured JSON response for the IDE."""
+        safe_payload = payload if isinstance(payload, dict) else {}
         if event_name == "SessionStart":
-            return {"injectSteps": []}
-        if event_name in ("PreInvocation", "PostInvocation"):
+            return self._on_session_start(safe_payload)
+        if event_name == "PreInvocation":
+            return self._on_pre_invocation(safe_payload)
+        if event_name == "PostInvocation":
             return {"injectSteps": [], "terminationBehavior": ""}
         if event_name == "UserPromptSubmit":
-            return self._on_user_prompt_submit(payload)
+            return self._on_user_prompt_submit(safe_payload)
         if event_name == "PreToolUse":
-            return self._on_pre_tool_use(payload)
+            return self._on_pre_tool_use(safe_payload)
         if event_name == "PostToolUse":
-            if isinstance(payload.get("toolCall"), dict):
+            if isinstance(safe_payload.get("toolCall"), dict):
                 return {}
-            return self._on_post_tool_use(payload)
+            return self._on_post_tool_use(safe_payload)
         if event_name == "Stop":
-            if "terminationReason" in payload or "executionNum" in payload:
-                return {"decision": "allow"}
-            return self._on_stop(payload)
+            if "terminationReason" in safe_payload or "executionNum" in safe_payload:
+                return self._on_agy_stop(safe_payload)
+            return self._on_stop(safe_payload)
         return {"continue": True}
+
+    def _hook_already_injected(self, payload: Dict[str, Any], event_name: str, key_material: str) -> bool:
+        conv_id = str(payload.get("conversationId") or payload.get("sessionId") or "")
+        if not conv_id:
+            return False
+        digest = hashlib.sha256(f"{conv_id}|{event_name}|{key_material}".encode("utf-8")).hexdigest()[:24]
+        state_path = Path(os.path.join(str(_ALEPH_ROOT), "runtime", "agy_hook_seen.json"))
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        seen: List[str] = []
+        if state_path.is_file():
+            try:
+                raw = json.loads(state_path.read_text(encoding="utf-8"))
+                if isinstance(raw, list):
+                    seen = [str(x) for x in raw[-31:]]
+            except Exception as exc:
+                sys.stderr.write(f"[aleph_hook] dedup read skipped: {exc}\n")
+        if digest in seen:
+            return True
+        seen.append(digest)
+        try:
+            state_path.write_text(json.dumps(seen[-32:]), encoding="utf-8")
+        except OSError as exc:
+            sys.stderr.write(f"[aleph_hook] dedup write skipped: {exc}\n")
+        return False
+
+    def _on_session_start(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self._hook_already_injected(payload, "SessionStart", "v33_kernel"):
+            return {"injectSteps": []}
+        kernel_path = Path(os.path.join(str(_ALEPH_ROOT), "EXECUTIVE_KERNEL.md"))
+        if kernel_path.is_file():
+            try:
+                kernel_text = kernel_path.read_text(encoding="utf-8").strip()
+                if kernel_text:
+                    return {
+                        "injectSteps": [
+                            {"systemMessage": {"systemMessage": kernel_text}}
+                        ]
+                    }
+            except OSError as exc:
+                sys.stderr.write(f"[aleph_hook] SessionStart kernel read failed: {exc}\n")
+        return {"injectSteps": []}
+
+    def _on_pre_invocation(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        prompt = str(
+            payload.get("lastUserInput")
+            or payload.get("prompt")
+            or payload.get("user_prompt")
+            or ""
+        ).strip()
+        if not prompt:
+            return {"injectSteps": [], "terminationBehavior": ""}
+        if payload.get("conversationId") or payload.get("sessionId"):
+            if self._hook_already_injected(payload, "PreInvocation", prompt):
+                return {"injectSteps": [], "terminationBehavior": ""}
+        elif int(payload.get("invocationNum", 1) or 1) > 1:
+            return {"injectSteps": [], "terminationBehavior": ""}
+
+        cwd_val = str(payload.get("cwd") or "") or None
+        prompt_meta = evaluate_user_prompt({"prompt": prompt, "repo_root": cwd_val})
+        brief = str(prompt_meta.get("executive_brief", "")).strip()
+        if not brief:
+            return {"injectSteps": [], "terminationBehavior": ""}
+        return {
+            "injectSteps": [
+                {"systemMessage": {"systemMessage": brief}}
+            ],
+            "terminationBehavior": "",
+        }
+
+    def _on_agy_stop(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        term_reason = str(payload.get("terminationReason", "NO_TOOL_CALL"))
+        if payload.get("continuationActive") or term_reason not in ("", "NO_TOOL_CALL"):
+            return {"decision": "allow"}
+        stop_eval = evaluate_stop_gate({
+            "verified": True,
+            "retries_count": 0,
+            "failed_assertions": 0,
+            "trigger_auto_gepa": True,
+        })
+        if int(stop_eval.get("exit_code", 0)) != 0:
+            return {
+                "decision": "continue",
+                "reason": "El Aleph StopGate Z3 requiere validar los archivos modificados antes de cerrar.",
+            }
+        return {"decision": "allow"}
 
     def _on_user_prompt_submit(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         prompt = payload.get("prompt") or payload.get("user_prompt") or ""

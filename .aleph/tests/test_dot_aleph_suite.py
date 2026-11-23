@@ -350,6 +350,49 @@ class TestPreToolUsePartialPythonEdits(unittest.TestCase):
         self.assertEqual(res_bad["exit_code"], 2)
         self.assertTrue(any("SyntaxError" in r for r in res_bad["reasons"]))
 
+    def test_antigravity_cli_hooks_session_start_pre_invocation_stop_and_agents_cap(self):
+        import os
+        import uuid
+        import aleph_cli
+        from aleph_core.router.dispatcher import estimate_bpe_tokens
+        from lib.aleph_mcp_server import AlephIDEHooksRunner
+
+        agents_md_txt = aleph_cli._build_sovereign_agents_md()
+        self.assertLessEqual(estimate_bpe_tokens(agents_md_txt), 350)
+        self.assertIn("aleph_discover_or_invoke", agents_md_txt)
+        self.assertNotIn("aleph_verify_z3", agents_md_txt)
+        self.assertNotIn("aleph_audit_code", agents_md_txt)
+
+        runner = AlephIDEHooksRunner()
+        cid = f"conv-{uuid.uuid4().hex[:8]}"
+
+        s1 = runner.run_hook("SessionStart", {"conversationId": cid})
+        self.assertEqual(len(s1.get("injectSteps", [])), 1)
+        self.assertIn("EL ALEPH EXECUTIVE KERNEL", s1["injectSteps"][0]["systemMessage"]["systemMessage"])
+        # Segunda ejecución en la misma conversación se deduplica
+        s2 = runner.run_hook("SessionStart", {"conversationId": cid})
+        self.assertEqual(s2.get("injectSteps", []), [])
+
+        p1 = runner.run_hook("PreInvocation", {
+            "conversationId": cid,
+            "invocationNum": 1,
+            "lastUserInput": "Auditar política RLS PostgreSQL 18 y reparar con Z3",
+            "cwd": str(_ROOT),
+        })
+        self.assertEqual(len(p1.get("injectSteps", [])), 1)
+        self.assertIn("[PARETO-6D]", p1["injectSteps"][0]["systemMessage"]["systemMessage"])
+        # Segunda ejecución en la misma conversación/prompt se deduplica (cero Context Rot)
+        p2 = runner.run_hook("PreInvocation", {
+            "conversationId": cid,
+            "invocationNum": 1,
+            "lastUserInput": "Auditar política RLS PostgreSQL 18 y reparar con Z3",
+            "cwd": str(_ROOT),
+        })
+        self.assertEqual(p2.get("injectSteps", []), [])
+
+        st_allow = runner.run_hook("Stop", {"terminationReason": "NO_TOOL_CALL", "executionNum": 1, "continuationActive": False})
+        self.assertEqual(st_allow.get("decision"), "allow")
+
 
 if __name__ == "__main__":
     unittest.main()
