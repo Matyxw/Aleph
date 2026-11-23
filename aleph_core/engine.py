@@ -881,14 +881,15 @@ class AlephUniversalMCPServer:
         },
         {
             "name": "aleph_discover_or_invoke",
-            "description": "Meta-herramienta JIT Soberana (Progressive Disclosure): busca por BM25 ('discover'), inspecciona el JSON Schema completo ('describe') o invoca bajo demanda ('invoke') cualquiera de las 752 herramientas de El Aleph sin contaminar el contexto inicial.",
+            "description": "Meta-herramienta JIT Soberana (Progressive Disclosure): busca por BM25 ('discover'), inspecciona el JSON Schema completo ('describe'), invoca bajo demanda ('invoke') o audita visualmente en Chromium ('visual_audit').",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["discover", "describe", "invoke"], "default": "discover"},
+                    "action": {"type": "string", "enum": ["discover", "describe", "invoke", "visual_audit"], "default": "discover"},
                     "query": {"type": "string", "description": "Consulta BM25 cuando action='discover'."},
-                    "target_tool": {"type": "string", "description": "Nombre exacto de la herramienta destino cuando action='describe' o 'invoke'."},
-                    "arguments": {"type": "object", "description": "Argumentos JSON para pasar a target_tool cuando action='invoke'."},
+                    "target_tool": {"type": "string", "description": "Herramienta destino para 'describe'/'invoke'."},
+                    "arguments": {"type": "object", "description": "Argumentos JSON para target_tool o visual_audit."},
+                    "path_or_url": {"type": "string", "description": "Archivo HTML o URL para action='visual_audit'."},
                     "top_k": {"type": "integer", "default": 8}
                 }
             }
@@ -1575,7 +1576,11 @@ class AlephUniversalMCPServer:
 
         elif tool_name == "aleph_discover_or_invoke":
             action = str(args.get("action", "discover")).strip().lower()
-            if action == "discover":
+            if action == "visual_audit":
+                from aleph_core.visual.browser_auditor import audit_visual_target
+                raw_args = args.get("arguments") if isinstance(args.get("arguments"), dict) else {}
+                return {"status": "AUDITED", "action": "visual_audit", "result": audit_visual_target(path_or_url=str(args.get("path_or_url") or raw_args.get("path_or_url") or args.get("query") or "").strip(), html_content=raw_args.get("html_content"))}
+            elif action == "discover":
                 q = str(args.get("query", "")).strip()
                 try:
                     top_k = max(1, min(25, int(args.get("top_k", 8))))
@@ -1628,13 +1633,8 @@ class AlephUniversalMCPServer:
                 if not isinstance(raw_target_args, dict):
                     raw_target_args = {}
                 result_payload = self._dispatch_mcp_tool(target, raw_target_args)
-                return {
-                    "status": "INVOKED",
-                    "action": "invoke",
-                    "target_tool": target,
-                    "result": result_payload,
-                }
-            return {"status": "ERROR", "action": action, "error": f"Unsupported action '{action}'. Use 'discover', 'describe', or 'invoke'."}
+                return {"status": "INVOKED", "action": "invoke", "target_tool": target, "result": result_payload}
+            return {"status": "ERROR", "action": action, "error": f"Unsupported action '{action}'."}
 
         else:
             from aleph_core.research_archive.mcp_dispatch_archive import dispatch_archived_mcp_tool

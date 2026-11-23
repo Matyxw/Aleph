@@ -462,7 +462,7 @@ MCP_TOOLS_SCHEMA: List[Dict[str, Any]] = [
     # Tool 17: Sovereign Design Creator
     {
         "name": "aleph_design_create",
-        "description": "CRÍTICO: Cuando el usuario pida crear un diseño o interfaz, NO envíes solo el brief corto. Tú (el agente Host) debes construir y pasar en custom_ir_tree una jerarquía completa de producción de mínimo 6 secciones y 25+ nodos IRComponent con copywriting real, datos técnicos coherentes con el dominio y cero clichés, respetando la secuencia Orient-Work-Confirm. Generates a certified Sovereign Design Artifact from a brief or custom AST tree, verifying 0 horizontal overflow with Z3, zero AI slop, and compiling to both HTML5+CSS (@layer) and React 19 TSX.",
+        "description": "Generates or validates a Sovereign Design Artifact from a brief or custom IR tree, verifying Z3 zero-overflow, WCAG contrast, zero AI slop, and compiling to HTML5+CSS (@layer) and React 19 TSX. Custom layouts are never locked to a fixed section count.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -471,7 +471,7 @@ MCP_TOOLS_SCHEMA: List[Dict[str, Any]] = [
                 "title": {"type": "string", "description": "Optional title for the interface."},
                 "custom_ir_tree": {
                     "type": "object",
-                    "description": "Árbol de componentes AST IRComponent completo diseñado por el Host Agent (mínimo 6 secciones y 25+ nodos)."
+                    "description": "Árbol de componentes AST IRComponent libre del Host Agent (opcional)."
                 },
                 "output_dir": {
                     "type": "string",
@@ -484,13 +484,14 @@ MCP_TOOLS_SCHEMA: List[Dict[str, Any]] = [
     # Tool 18: Sovereign Design Auditor
     {
         "name": "aleph_design_audit",
-        "description": "Audits rendered HTML markup for accessibility, SMT zero-overflow guarantees, and detects AI slop clichés.",
+        "description": "Audits custom HTML markup or live path/URL for accessibility, Z3/DOM zero-overflow, WCAG contrast, AI slop, and optional multi-viewport Chromium screenshots.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "html_content": {"type": "string", "description": "HTML content to audit."}
-            },
-            "required": ["html_content"]
+                "html_content": {"type": "string", "description": "HTML content to audit."},
+                "path_or_url": {"type": "string", "description": "Optional HTML file path or URL to audit."},
+                "run_browser_audit": {"type": "boolean", "default": False}
+            }
         }
     },
     # Tool 19: Sovereign Design Compiler
@@ -930,7 +931,11 @@ class AlephMCPServer:
         if name == "aleph_design_audit":
             from lib.aleph_design_facade import AlephDesignFacade
             facade = AlephDesignFacade()
-            return facade.audit_existing_markup(args.get("html_content", "<!DOCTYPE html><html lang=\"en\"><head><title>Audit</title></head><body><main><h1>Audit</h1></main></body></html>"))
+            return facade.audit_existing_markup(
+                html_content=str(args.get("html_content", "")),
+                path_or_url=args.get("path_or_url"),
+                run_browser_audit=bool(args.get("run_browser_audit", False)),
+            )
 
         # Tool 19: Sovereign Design Compile
         if name == "aleph_design_compile":
@@ -1166,9 +1171,12 @@ class AlephIDEHooksRunner:
             steps.append({"systemMessage": {"systemMessage": brief}})
 
         if bool(prompt_meta.get("is_design_turn")):
-            should_inject_dk = True
-            if payload.get("conversationId") or payload.get("sessionId"):
-                should_inject_dk = not self._hook_already_injected(payload, "PreInvocation_DESIGN_KERNEL", "v33_design")
+            has_conv = bool(payload.get("conversationId") or payload.get("sessionId"))
+            should_inject_dk = (
+                not self._hook_already_injected(payload, "PreInvocation_DESIGN_KERNEL", "v33_design")
+                if has_conv
+                else True
+            )
             if should_inject_dk:
                 dk_path = Path(os.path.join(str(_ALEPH_ROOT), "DESIGN_KERNEL.md"))
                 if dk_path.is_file():
@@ -1178,6 +1186,29 @@ class AlephIDEHooksRunner:
                             steps.append({"systemMessage": {"systemMessage": dk_text}})
                     except OSError as exc:
                         sys.stderr.write(f"[aleph_hook] DESIGN_KERNEL read failed: {exc}\n")
+
+            design_mode = str(prompt_meta.get("design_mode") or "").strip().upper()
+            mode_files = {
+                "HYPER_SPEED": "hyper_speed.md",
+                "ELITE_PRODUCT": "elite_product.md",
+                "AVANT_GARDE_SOTY": "avant_garde_soty.md",
+            }
+            mode_file = mode_files.get(design_mode)
+            if mode_file:
+                should_inject_mode = (
+                    not self._hook_already_injected(payload, "PreInvocation_DESIGN_MODE", design_mode)
+                    if has_conv
+                    else True
+                )
+                if should_inject_mode:
+                    mode_path = Path(os.path.join(str(_ALEPH_ROOT), "design_modes", mode_file))
+                    if mode_path.is_file():
+                        try:
+                            mode_text = mode_path.read_text(encoding="utf-8").strip()
+                            if mode_text:
+                                steps.append({"systemMessage": {"systemMessage": mode_text}})
+                        except OSError as exc:
+                            sys.stderr.write(f"[aleph_hook] design_mode read failed: {exc}\n")
 
         return {
             "injectSteps": steps,

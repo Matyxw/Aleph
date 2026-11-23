@@ -67,7 +67,16 @@ except ImportError:
 
 
 def _chromium_or_playwright_disponible() -> bool:
-    """True si Chromium/Selenium CDP o Node Playwright están disponibles para el oráculo físico en vivo."""
+    """True si Python Playwright+Chromium, Chromium/Selenium CDP o Node Playwright están disponibles."""
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as pw:
+            exe = pw.chromium.executable_path
+            if exe and os.path.isfile(exe):
+                return True
+    except Exception:
+        pass
     try:
         import selenium  # noqa: F401
         if shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome"):

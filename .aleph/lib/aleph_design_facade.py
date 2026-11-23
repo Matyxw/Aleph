@@ -251,14 +251,34 @@ class AlephDesignFacade:
             output_dir=os.path.abspath(output_dir) if output_dir else None,
         )
 
-    def audit_existing_markup(self, html_content: str) -> Dict[str, Any]:
-        """Audita cualquier marcado HTML externo para certificar si es soberano o slop de IA."""
-        report = self.render_oracle.audit_html(html_content)
-        return {
-            "is_passing": report.is_passing,
-            "accessibility_score": report.accessibility_score,
-            "slop_score": report.slop_score,
-            "heading_violations": report.heading_hierarchy_violations,
-            "slop_findings": report.slop_findings,
-            "summary": report.summary()
+    def audit_existing_markup(
+        self,
+        html_content: str = "",
+        path_or_url: Optional[str] = None,
+        run_browser_audit: bool = False,
+    ) -> Dict[str, Any]:
+        """Audita marcado HTML o URL libre (estático + Chromium real opcional) sin forzar plantillas."""
+        raw_html = str(html_content or "")
+        if not raw_html.strip() and path_or_url and os.path.isfile(str(path_or_url)):
+            with open(str(path_or_url), "r", encoding="utf-8", errors="replace") as fh:
+                raw_html = fh.read()
+        report = self.render_oracle.audit_html(raw_html) if raw_html.strip() else None
+        payload: Dict[str, Any] = {
+            "is_passing": bool(report.is_passing) if report is not None else True,
+            "accessibility_score": report.accessibility_score if report is not None else 100.0,
+            "slop_score": report.slop_score if report is not None else 0.0,
+            "heading_violations": list(report.heading_hierarchy_violations) if report is not None else [],
+            "slop_findings": list(report.slop_findings) if report is not None else [],
+            "summary": report.summary() if report is not None else "AUDIT_PENDING_BROWSER",
         }
+        if run_browser_audit or path_or_url:
+            from aleph_core.visual.browser_auditor import audit_visual_target
+
+            vis = audit_visual_target(
+                path_or_url=str(path_or_url or ""),
+                html_content=raw_html if not path_or_url else None,
+            )
+            payload["browser_audit"] = vis
+            payload["is_passing"] = bool(payload["is_passing"] and vis.get("passed", False))
+            payload["summary"] = str(vis.get("summary") or payload["summary"])
+        return payload

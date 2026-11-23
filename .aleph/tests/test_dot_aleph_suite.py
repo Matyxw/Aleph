@@ -447,24 +447,24 @@ class TestRonda7AlephDesignEngineJIT(unittest.TestCase):
         self.assertEqual(len(r_be["injectSteps"]), 1)
         self.assertNotIn("ALEPH DESIGN ENGINE", r_be["injectSteps"][0]["systemMessage"]["systemMessage"])
 
-        # Primer turno UI en la conversación: inyecta executive_brief + DESIGN_KERNEL.md
+        # Primer turno UI en la conversación: inyecta executive_brief + DESIGN_KERNEL.md (+ playbook de modo)
         r_ui1 = runner.run_hook("PreInvocation", {
             "conversationId": cid,
             "invocationNum": 1,
             "lastUserInput": "Crear landing Awwwards SOTY con Three.js y WebGPU",
             "cwd": str(_ROOT),
         })
-        self.assertEqual(len(r_ui1["injectSteps"]), 2)
+        self.assertGreaterEqual(len(r_ui1["injectSteps"]), 2)
         self.assertIn("ALEPH DESIGN ENGINE", r_ui1["injectSteps"][1]["systemMessage"]["systemMessage"])
 
-        # Segundo turno UI distinto en la MISMA conversación: no re-inyecta DESIGN_KERNEL.md
+        # Segundo turno UI distinto en la MISMA conversación: NO re-inyecta DESIGN_KERNEL.md
         r_ui2 = runner.run_hook("PreInvocation", {
             "conversationId": cid,
             "invocationNum": 1,
             "lastUserInput": "Agregar tabla de precios Bento al dashboard SaaS",
             "cwd": str(_ROOT),
         })
-        self.assertEqual(len(r_ui2["injectSteps"]), 1)
+        self.assertNotIn("ALEPH DESIGN ENGINE", json.dumps(r_ui2["injectSteps"]))
         self.assertIn("[DESIGN] mode=ELITE_PRODUCT", r_ui2["injectSteps"][0]["systemMessage"]["systemMessage"])
 
     def test_pre_tool_use_anti_slop_and_stop_gate_ui_invariants(self):
@@ -523,6 +523,216 @@ class TestRonda7AlephDesignEngineJIT(unittest.TestCase):
         res = json.loads(p.stdout.strip().splitlines()[-1])
         self.assertEqual(res["tools"], 12)
         self.assertEqual(res["arch"], [])
+
+
+class TestRonda8RealVisualEyesAndModePlaybooks(unittest.TestCase):
+    def test_mode_micro_playbooks_bpe_budget_and_kernel_decoupled(self):
+        from aleph_core.router.dispatcher import estimate_bpe_tokens
+
+        dk = (_ALEPH / "DESIGN_KERNEL.md").read_text(encoding="utf-8")
+        self.assertLessEqual(estimate_bpe_tokens(dk), 260)
+        self.assertIn("visual-audit", dk)
+        self.assertIn("_build_rich_6section_template", dk)
+
+        for mf in ("hyper_speed.md", "elite_product.md", "avant_garde_soty.md"):
+            mp = _ALEPH / "design_modes" / mf
+            self.assertTrue(mp.is_file(), f"Missing mode playbook: {mp}")
+            self.assertLessEqual(estimate_bpe_tokens(mp.read_text(encoding="utf-8")), 260)
+
+    def test_mode_specific_jit_injection_dedup_and_zero_backend_leakage(self):
+        import uuid
+        from lib.aleph_mcp_server import AlephIDEHooksRunner
+
+        runner = AlephIDEHooksRunner()
+        cid = f"r8-conv-{uuid.uuid4().hex[:8]}"
+
+        r_be = runner.run_hook("PreInvocation", {
+            "conversationId": cid,
+            "invocationNum": 1,
+            "lastUserInput": "Crear migración RLS para PostgreSQL 18 con índices GIN",
+            "cwd": str(_ROOT),
+        })
+        self.assertEqual(len(r_be["injectSteps"]), 1)
+        self.assertNotIn("MODE:", json.dumps(r_be))
+        self.assertNotIn("ALEPH DESIGN ENGINE", json.dumps(r_be))
+
+        r_hs1 = runner.run_hook("PreInvocation", {
+            "conversationId": cid,
+            "invocationNum": 1,
+            "lastUserInput": "Construir interfaz Svelte de terminal trading sub-ms con orderbook",
+            "cwd": str(_ROOT),
+        })
+        msgs_hs1 = [s["systemMessage"]["systemMessage"] for s in r_hs1["injectSteps"]]
+        self.assertEqual(len(msgs_hs1), 3)
+        self.assertTrue(any("ALEPH DESIGN ENGINE" in m for m in msgs_hs1))
+        self.assertTrue(any("# MODE: HYPER_SPEED" in m for m in msgs_hs1))
+        self.assertFalse(any("# MODE: ELITE_PRODUCT" in m or "# MODE: AVANT_GARDE_SOTY" in m for m in msgs_hs1))
+
+        # Mismo modo otra vez en misma conversación: dedup 100%
+        r_hs2 = runner.run_hook("PreInvocation", {
+            "conversationId": cid,
+            "invocationNum": 1,
+            "lastUserInput": "Agregar componente CSS de filtros rápidos al orderbook de telemetría",
+            "cwd": str(_ROOT),
+        })
+        self.assertEqual(len(r_hs2["injectSteps"]), 1)
+
+        # Cambio de modo a ELITE_PRODUCT en misma conversación: inyecta solo elite_product.md (sin DESIGN_KERNEL)
+        r_ep = runner.run_hook("PreInvocation", {
+            "conversationId": cid,
+            "invocationNum": 1,
+            "lastUserInput": "Diseñar panel de facturación SaaS con React y Bento grid",
+            "cwd": str(_ROOT),
+        })
+        msgs_ep = [s["systemMessage"]["systemMessage"] for s in r_ep["injectSteps"]]
+        self.assertEqual(len(msgs_ep), 2)
+        self.assertTrue(any("# MODE: ELITE_PRODUCT" in m for m in msgs_ep))
+        self.assertFalse(any("ALEPH DESIGN ENGINE" in m for m in msgs_ep))
+
+        # Cambio a AVANT_GARDE_SOTY en misma conversación
+        r_ag = runner.run_hook("PreInvocation", {
+            "conversationId": cid,
+            "invocationNum": 1,
+            "lastUserInput": "Landing inmersiva Awwwards SOTY con shaders WebGPU y GSAP",
+            "cwd": str(_ROOT),
+        })
+        msgs_ag = [s["systemMessage"]["systemMessage"] for s in r_ag["injectSteps"]]
+        self.assertEqual(len(msgs_ag), 2)
+        self.assertTrue(any("# MODE: AVANT_GARDE_SOTY" in m for m in msgs_ag))
+
+    def test_real_chromium_visual_audit_broken_vs_clean_and_mcp_decoupled(self):
+        import shutil
+        import tempfile
+        import aleph_core.engine
+        from aleph_core.visual.browser_auditor import VisualBrowserAuditor
+        from lib.aleph_design_facade import AlephDesignFacade
+
+        broken_html = """<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  body { margin: 0; background: #ffffff; font-family: 'Space Grotesk', sans-serif; }
+  .wide { width: 1600px; height: 60px; animation: spin 2s linear infinite; }
+  .low { color: #d8d8d8; background: #ffffff; font-size: 13px; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+</style>
+<script>console.error("SENTRY_SIMULATED_JS_FAIL");</script>
+</head><body>
+  <h1>Broken Freeform Layout</h1>
+  <div class="wide">Overflow box</div>
+  <p class="low">Contrast failure sample</p>
+  <img src="/missing-nonexistent-image.png" alt="missing" />
+</body></html>"""
+
+        clean_html = """<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bespoke Telemetry Terminal</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; padding: 24px; background: #ffffff; color: #0f172a; font-family: 'Space Grotesk', sans-serif; }
+  main { max-width: 960px; margin: 0 auto; }
+  .card { border: 1px solid #cbd5e1; padding: 16px; transition: opacity 120ms ease; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.7} }
+  .pulse { animation: blink 2s ease infinite; }
+  @media (prefers-reduced-motion: reduce) { .pulse { animation: none !important; } }
+</style></head><body>
+<main>
+  <h1>Telemetry Node Alpha</h1>
+  <section class="card"><h2 class="pulse">Live Latency 1.4ms</h2><p>Healthy bespoke layout without 6-section lock.</p></section>
+</main></body></html>"""
+
+        with tempfile.TemporaryDirectory() as tmp_d:
+            broken_file = Path(tmp_d) / "broken.html"
+            clean_file = Path(tmp_d) / "clean.html"
+            broken_file.write_text(broken_html, encoding="utf-8")
+            clean_file.write_text(clean_html, encoding="utf-8")
+
+            auditor = VisualBrowserAuditor(repo_root=str(_ROOT))
+            rep_bad = auditor.audit(path_or_url=str(broken_file))
+            try:
+                self.assertFalse(rep_bad.passed)
+                self.assertGreater(rep_bad.horizontal_overflow_px, 0.0)
+                self.assertTrue(rep_bad.console_errors)
+                self.assertTrue(rep_bad.broken_images)
+                self.assertTrue(rep_bad.contrast_violations)
+                self.assertFalse(rep_bad.reduced_motion_ok)
+                for vp in ("mobile_390", "desktop_1440", "ultrawide_2560"):
+                    shot = Path(rep_bad.screenshots[vp])
+                    self.assertTrue(shot.is_file())
+                    self.assertGreater(shot.stat().st_size, 1024)
+                    self.assertTrue(shot.read_bytes().startswith(b"\x89PNG"))
+            finally:
+                if rep_bad.screenshots.get("mobile_390"):
+                    shutil.rmtree(Path(rep_bad.screenshots["mobile_390"]).parent, ignore_errors=True)
+
+            rep_ok = auditor.audit(path_or_url=str(clean_file))
+            try:
+                self.assertTrue(rep_ok.passed, f"Unexpected violations: {rep_ok.violations} / {rep_ok.contrast_violations}")
+                self.assertEqual(rep_ok.horizontal_overflow_px, 0.0)
+                self.assertEqual(rep_ok.console_errors, [])
+                self.assertEqual(rep_ok.broken_images, [])
+                self.assertEqual(rep_ok.contrast_violations, [])
+                self.assertTrue(rep_ok.reduced_motion_ok)
+                for vp in ("mobile_390", "desktop_1440", "ultrawide_2560"):
+                    shot = Path(rep_ok.screenshots[vp])
+                    self.assertTrue(shot.is_file())
+                    self.assertGreater(shot.stat().st_size, 1024)
+            finally:
+                if rep_ok.screenshots.get("mobile_390"):
+                    shutil.rmtree(Path(rep_ok.screenshots["mobile_390"]).parent, ignore_errors=True)
+
+            # Verificar desacoplamiento de audit_existing_markup + aleph_discover_or_invoke action='visual_audit'
+            facade_res = AlephDesignFacade().audit_existing_markup(path_or_url=str(clean_file), run_browser_audit=True)
+            try:
+                self.assertTrue(facade_res["is_passing"], f"Facade custom markup failed: {facade_res}")
+                self.assertTrue(facade_res["browser_audit"]["passed"])
+            finally:
+                shots = facade_res.get("browser_audit", {}).get("screenshots", {})
+                if shots.get("mobile_390"):
+                    shutil.rmtree(Path(shots["mobile_390"]).parent, ignore_errors=True)
+
+            srv = aleph_core.engine.AlephUniversalMCPServer()
+            mcp_res = srv.handle_jsonrpc_request({
+                "jsonrpc": "2.0",
+                "id": 88,
+                "method": "tools/call",
+                "params": {
+                    "name": "aleph_discover_or_invoke",
+                    "arguments": {"action": "visual_audit", "path_or_url": str(clean_file)},
+                },
+            })
+            payload = json.loads(mcp_res["result"]["content"][0]["text"])
+            try:
+                self.assertEqual(payload["status"], "AUDITED")
+                self.assertTrue(payload["result"]["passed"])
+            finally:
+                shots2 = payload.get("result", {}).get("screenshots", {})
+                if shots2.get("mobile_390"):
+                    shutil.rmtree(Path(shots2["mobile_390"]).parent, ignore_errors=True)
+
+    def test_cold_boot_zero_archive_zero_playwright_and_tool_counts(self):
+        import subprocess
+        code = (
+            "import json, os, sys; "
+            "os.environ['ALEPH_MCP_PROFILE'] = 'sovereign'; "
+            "sys.path.insert(0, '.aleph'); "
+            "import aleph_core.engine; "
+            "from hooks.user_prompt_submit import evaluate_user_prompt; "
+            "from hooks.stop_gate import evaluate_stop_gate; "
+            "evaluate_user_prompt({'prompt': 'Optimizar índice GIN en PostgreSQL 18'}); "
+            "evaluate_stop_gate({'verified': True, 'persist_session_lesson': False}); "
+            "srv = aleph_core.engine.AlephUniversalMCPServer(); "
+            "sov = len(srv.handle_jsonrpc_request({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'})['result']['tools']); "
+            "arch = [m for m in sys.modules if 'research_archive' in m]; "
+            "pw = [m for m in sys.modules if 'playwright' in m]; "
+            "full = len(srv.get_tools_manifest()); "
+            "print(json.dumps({'sov': sov, 'full': full, 'arch': arch, 'pw': pw}))"
+        )
+        p = subprocess.run([sys.executable, "-B", "-c", code], cwd=str(_ROOT), capture_output=True, text=True, check=True)
+        res = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertEqual(res["sov"], 12)
+        self.assertEqual(res["full"], 752)
+        self.assertEqual(res["arch"], [])
+        self.assertEqual(res["pw"], [])
 
 
 if __name__ == "__main__":

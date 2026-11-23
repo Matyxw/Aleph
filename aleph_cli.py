@@ -1001,6 +1001,15 @@ def cmd_evolve_gepa() -> int:
     return cli_evolve_gepa(sys.argv[2:])
 
 
+def cmd_visual_audit(target: str) -> int:
+    """Audita visualmente URL o HTML local en Chromium headless multiviewport con PNGs reales."""
+    from aleph_core.visual.browser_auditor import audit_visual_target
+
+    report = audit_visual_target(path_or_url=target)
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0 if report.get("passed") else 1
+
+
 def __getattr__(name: str):
     if name.startswith("cmd_"):
         from aleph_core.research_archive import cli_archive as _ca
@@ -1103,6 +1112,8 @@ if __name__ == "__main__":
         sys.exit(cmd_autonomous_queue())
     elif cmd == "evolve-gepa":
         sys.exit(cmd_evolve_gepa())
+    elif cmd == "visual-audit" and len(sys.argv) > 2:
+        sys.exit(cmd_visual_audit(sys.argv[2]))
     else:
         from aleph_core.research_archive.cli_archive import dispatch_archived_cli_command
         rc = dispatch_archived_cli_command(cmd, sys.argv)

@@ -623,6 +623,97 @@ class LivePlaywrightOracle:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
+    @classmethod
+    def audit_via_playwright_py_dict(cls, html_content: str, timeout_sec: float = 15.0) -> Dict[str, Any]:
+        """Ejecuta la auditoría de los 6 viewports canónicos sobre Chromium real usando Python Playwright."""
+        from playwright.sync_api import sync_playwright
+
+        safe_html = re.sub(
+            r"while\s*\(\s*true\s*\)\s*\{[^}]*\}",
+            "/* blocked_infinite_loop */",
+            html_content,
+            flags=re.IGNORECASE,
+        )
+        viewport_results: Dict[str, Any] = {}
+        max_horizontal_overflow = 0.0
+        all_heading_violations: Set[str] = set()
+        all_small_targets: Set[str] = set()
+        all_visual_violations: Set[str] = set()
+        js_fn = "(arg0) => {\nconst arguments = [arg0];\n" + cls.VIEWPORT_AUDIT_SCRIPT + "\n}"
+        timeout_ms = max(2000, int(float(timeout_sec) * 1000))
+
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--hide-scrollbars"],
+            )
+            try:
+                browser_version = str(browser.version or "unknown")
+                page = browser.new_page(viewport={"width": 1440, "height": 900})
+                page.set_default_timeout(timeout_ms)
+                page.set_content(safe_html, wait_until="load", timeout=timeout_ms)
+
+                last_visual_violations: List[str] = []
+                for vp in cls.CANONICAL_VIEWPORTS:
+                    page.set_viewport_size({"width": int(vp.get("width", 1440)), "height": int(vp.get("height", 900))})
+                    page.evaluate("void(document.documentElement.offsetHeight)")
+                    metrics = page.evaluate(js_fn, vp.get("name", "desktop_1440"))
+                    if not isinstance(metrics, dict):
+                        continue
+                    overflow_val = float(metrics.get("overflowX", 0.0))
+                    small_list = list(metrics.get("smallTargets") or [])
+                    heading_list = list(metrics.get("headingViolations") or [])
+                    vis_list = list(metrics.get("visualViolations") or [])
+                    vp_name = str(vp.get("name", "unknown"))
+                    viewport_results[vp_name] = {
+                        "viewport": f"{vp.get('width')}x{vp.get('height')}",
+                        "overflowX": overflow_val,
+                        "scrollWidth": int(metrics.get("scrollWidth", 0)),
+                        "clientWidth": int(metrics.get("clientWidth", 0)),
+                        "smallTargets": small_list,
+                        "headingViolations": heading_list,
+                        "headingsCount": int(metrics.get("headingsCount", 0)),
+                        "visualViolations": vis_list,
+                        "photometrics": dict(metrics.get("photometrics") or {}),
+                    }
+                    if overflow_val > max_horizontal_overflow:
+                        max_horizontal_overflow = overflow_val
+                    for v in heading_list:
+                        all_heading_violations.add(v)
+                    for t in small_list:
+                        all_small_targets.add(t)
+                    for v in vis_list:
+                        all_visual_violations.add(v)
+                    last_visual_violations = vis_list
+                for v in last_visual_violations:
+                    all_visual_violations.add(v)
+            finally:
+                browser.close()
+
+        is_passing = (
+            max_horizontal_overflow <= 0.0
+            and len(all_heading_violations) == 0
+            and len(all_visual_violations) == 0
+        )
+        return {
+            "engine": f"Chromium/Blink (Playwright v{browser_version})",
+            "browser_version": browser_version,
+            "is_passing": is_passing,
+            "horizontal_overflow_px": max_horizontal_overflow,
+            "viewports": viewport_results,
+            "heading_hierarchy_violations": list(all_heading_violations),
+            "small_touch_targets": list(all_small_targets),
+            "visual_design_violations": list(all_visual_violations),
+            "photometric_audit": {
+                "accent_budget_passed": not any("Presupuesto de Acento" in v for v in all_visual_violations),
+                "action_colinearity_passed": not any("Co-linearidad" in v for v in all_visual_violations),
+                "protective_surface_passed": not any("Superficie Protectora" in v for v in all_visual_violations),
+                "visual_density_passed": not any("Densidad Visual" in v for v in all_visual_violations),
+                "menu_wrapping_passed": not any("enlace de menú" in v for v in all_visual_violations),
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
     def audit_live_rendered_html(
         self,
         html_content: str,
@@ -635,12 +726,19 @@ class LivePlaywrightOracle:
         report_data: Optional[Dict[str, Any]] = None
         err_msg: str = ""
 
-        # Utilizar directamente el pool nativo de Chromium CDP en Python para máxima velocidad (<150ms por test)
+        # Intentar primero Python Playwright nativo; si falla, Selenium CDP y finalmente Node Playwright
         try:
-            report_data = self.audit_via_chromium_cdp_dict(html_content, timeout_sec=timeout_sec)
-        except Exception as cdp_exc:
-            err_msg = str(cdp_exc)
+            report_data = self.audit_via_playwright_py_dict(html_content, timeout_sec=timeout_sec)
+        except Exception as pw_exc:
+            err_msg = str(pw_exc)
             report_data = None
+
+        if report_data is None:
+            try:
+                report_data = self.audit_via_chromium_cdp_dict(html_content, timeout_sec=timeout_sec)
+            except Exception as cdp_exc:
+                err_msg = f"{err_msg}; cdp={cdp_exc}" if err_msg else str(cdp_exc)
+                report_data = None
 
         # Si el pool directo en Python no estuviera disponible, intentar el script Node de Playwright
         if report_data is None:
