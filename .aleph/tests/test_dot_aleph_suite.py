@@ -735,5 +735,51 @@ class TestRonda8RealVisualEyesAndModePlaybooks(unittest.TestCase):
         self.assertEqual(res["pw"], [])
 
 
+class TestRonda9DesignSkillsAndAestheticWiring(unittest.TestCase):
+    def test_design_kernel_and_modes_delegate_to_sota_skills_within_bpe_budget(self):
+        from aleph_core.router.dispatcher import estimate_bpe_tokens
+        from aleph_core.router.executive_preflight import ExecutivePreflight
+
+        dk = (_ALEPH / "DESIGN_KERNEL.md").read_text(encoding="utf-8")
+        self.assertLessEqual(estimate_bpe_tokens(dk), 260)
+        self.assertIn("design-taste-frontend", dk)
+        self.assertIn("impeccable", dk)
+
+        for mf in ("hyper_speed.md", "elite_product.md", "avant_garde_soty.md"):
+            txt = (_ALEPH / "design_modes" / mf).read_text(encoding="utf-8")
+            self.assertLessEqual(estimate_bpe_tokens(txt), 260)
+            self.assertIn("design-taste-frontend", txt)
+            self.assertIn("impeccable", txt)
+
+        ui_rep = ExecutivePreflight.analyze("Crear landing Awwwards SOTY para hardware KRONOS-01", repo_root=str(_ROOT))
+        self.assertTrue(ui_rep["is_design_turn"])
+        self.assertLessEqual(ui_rep["executive_brief_bpe_tokens"], 320)
+        self.assertIn("skills=design-taste-frontend+impeccable", ui_rep["executive_brief"])
+
+        be_rep = ExecutivePreflight.analyze("Optimizar índice GIN y consulta SQL en PostgreSQL 18", repo_root=str(_ROOT))
+        self.assertFalse(be_rep["is_design_turn"])
+        self.assertNotIn("design-taste-frontend", be_rep["executive_brief"])
+
+    def test_pre_tool_use_allows_real_google_fonts_and_cdns_without_jail(self):
+        html_with_cdns = """<!DOCTYPE html><html lang="en"><head>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@700&display=swap" />
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script type="module" src="https://esm.sh/lucide@0.460.0"></script>
+</head><body><h1>Hardware Launch</h1><img src="https://images.unsplash.com/photo-1511379938547-c1f69419868d" alt="synth" /></body></html>"""
+        res_ok = evaluate_pre_tool_use({"file_path": "index.html", "code": html_with_cdns})
+        self.assertTrue(res_ok["allowed"], f"PreToolUse falsely blocked real fonts/CDNs: {res_ok}")
+
+        res_slop = evaluate_pre_tool_use({"file_path": "index.html", "code": "<p>Lorem ipsum dolor</p>"})
+        self.assertFalse(res_slop["allowed"])
+
+    def test_global_skills_installed_without_duplicates(self):
+        global_skills = Path.home() / ".gemini" / "config" / "skills"
+        self.assertTrue((global_skills / "impeccable" / "SKILL.md").is_file())
+        self.assertTrue((global_skills / "design-taste-frontend" / "SKILL.md").is_file())
+        dup_dir = Path.home() / ".agents" / "skills"
+        for name in ("impeccable", "design-taste-frontend"):
+            self.assertFalse((dup_dir / name).exists(), f"Unexpected duplicate copy in {dup_dir / name}")
+
+
 if __name__ == "__main__":
     unittest.main()

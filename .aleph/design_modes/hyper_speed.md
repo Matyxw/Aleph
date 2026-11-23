@@ -1,7 +1,6 @@
 # MODE: HYPER_SPEED
-Domain: trading, orderbook, terminal, clinical, telemetry, dense tables.
-Stack: Astro, Svelte5, SolidJS or Vanilla + CSS @layer. Zero bloat JS.
-1. Latency: contain: layout paint, tabular-nums, keyboard-first shortcuts (Cmd+K, j/k, Esc), virtualized >100 rows.
-2. Zero CLS & zero scroll-x across 390/1440/2560; fixed column tracks, sticky headers, zero fluff banners.
-3. Legibility: WCAG >= 7:1 (APCA >= 75 Lc) for numbers; semantic accent <8% viewport.
-4. Motion: <=120ms transform/opacity + @media (prefers-reduced-motion: reduce). Verify via `aleph visual-audit`.
+Skills: activá `design-taste-frontend` + `impeccable` (`critique`, `distill`).
+Domain: trading, orderbook, terminal, telemetry, dense tables. Stack: Astro/Svelte5/Solid + real monospace Google Fonts (`JetBrains Mono`/`IBM Plex Mono`) + CSS `@layer`.
+1. Prohibido fuentes de sistema o SVG amateur: usá activos reales y tabular-nums sub-ms (`contain: layout paint`, keyboard-first).
+2. Hero-First en Chromium: 0px overflow (390/1440/2560), WCAG >=7:1, accent <8%.
+3. GPU motion (`transform`/`opacity` + `prefers-reduced-motion`). Validá con `aleph visual-audit`.
