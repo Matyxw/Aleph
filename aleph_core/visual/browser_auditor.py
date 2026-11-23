@@ -142,7 +142,8 @@ _WEBGL_FONTS_JS = """async () => {
       if (f.status === 'loaded' && f.family && !loadedFonts.includes(f.family)) loadedFonts.push(f.family);
     }
   }
-  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const tick = () => new Promise((r) => requestAnimationFrame(r));
+  for (let i = 0; i < 6; i++) await tick();
   const canvases = [];
   for (const c of Array.from(document.querySelectorAll('canvas'))) {
     const rect = c.getBoundingClientRect();
@@ -343,14 +344,6 @@ class VisualBrowserAuditor:
                 page.goto(url, wait_until="load", timeout=timeout_ms)
                 wall_ms = round((time.perf_counter() - t0) * 1000.0, 2)
 
-                wf = page.evaluate(_WEBGL_FONTS_JS)
-                if isinstance(wf, dict):
-                    loaded_web_fonts = list(wf.get("loadedFonts") or [])
-                    c_list = list(wf.get("canvases") or [])
-                    lost_n = sum(1 for c in c_list if c.get("contextLost") or c.get("width", 0) <= 0 or c.get("height", 0) <= 0)
-                    mono_n = sum(1 for c in c_list if c.get("monochrome"))
-                    webgl_audit = {"canvas_count": len(c_list), "canvases": c_list, "context_lost_count": lost_n, "monochrome_count": mono_n, "all_healthy": (lost_n == 0 and mono_n == 0)}
-
                 for vp_name, vw, vh in VIEWPORTS:
                     page.set_viewport_size({"width": vw, "height": vh})
                     page.evaluate("void(document.documentElement.offsetHeight)")
@@ -374,6 +367,13 @@ class VisualBrowserAuditor:
                     page.screenshot(path=shot_path, full_page=False)
                     screenshots[vp_name] = shot_path
                     if vp_name == "desktop_1440":
+                        wf = page.evaluate(_WEBGL_FONTS_JS)
+                        if isinstance(wf, dict):
+                            loaded_web_fonts = list(wf.get("loadedFonts") or [])
+                            c_list = list(wf.get("canvases") or [])
+                            lost_n = sum(1 for c in c_list if c.get("contextLost") or c.get("width", 0) <= 0 or c.get("height", 0) <= 0)
+                            mono_n = sum(1 for c in c_list if c.get("monochrome"))
+                            webgl_audit = {"canvas_count": len(c_list), "canvases": c_list, "context_lost_count": lost_n, "monochrome_count": mono_n, "all_healthy": (lost_n == 0 and mono_n == 0)}
                         ml = page.evaluate(_MOTION_LAYOUT_JS)
                         if isinstance(ml, dict):
                             if isinstance(ml.get("motion"), dict):
