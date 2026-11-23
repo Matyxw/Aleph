@@ -366,11 +366,13 @@ class TestPreToolUsePartialPythonEdits(unittest.TestCase):
         runner = AlephIDEHooksRunner()
         cid = f"conv-{uuid.uuid4().hex[:8]}"
 
-        s1 = runner.run_hook("SessionStart", {"conversationId": cid})
+        # SessionStart no duplica AGENTS.md cuando está activo; solo inyecta si forceInjectKernel=True
+        s_clean = runner.run_hook("SessionStart", {"conversationId": cid})
+        self.assertEqual(s_clean.get("injectSteps", []), [])
+        s1 = runner.run_hook("SessionStart", {"conversationId": cid, "forceInjectKernel": True})
         self.assertEqual(len(s1.get("injectSteps", [])), 1)
         self.assertIn("EL ALEPH EXECUTIVE KERNEL", s1["injectSteps"][0]["systemMessage"]["systemMessage"])
-        # Segunda ejecución en la misma conversación se deduplica
-        s2 = runner.run_hook("SessionStart", {"conversationId": cid})
+        s2 = runner.run_hook("SessionStart", {"conversationId": cid, "forceInjectKernel": True})
         self.assertEqual(s2.get("injectSteps", []), [])
 
         p1 = runner.run_hook("PreInvocation", {
@@ -392,6 +394,135 @@ class TestPreToolUsePartialPythonEdits(unittest.TestCase):
 
         st_allow = runner.run_hook("Stop", {"terminationReason": "NO_TOOL_CALL", "executionNum": 1, "continuationActive": False})
         self.assertEqual(st_allow.get("decision"), "allow")
+
+
+class TestRonda7AlephDesignEngineJIT(unittest.TestCase):
+    """Pruebas Ronda 7: DESIGN_KERNEL <=260 BPE, 3 Modos JIT, Dedup, Anti-Slop, Gate UI en StopGate y Cold-Boot."""
+
+    def test_design_kernel_token_budget_and_non_truncation(self):
+        from aleph_core.router.dispatcher import estimate_bpe_tokens
+        from aleph_core.router.executive_preflight import ExecutivePreflight
+
+        dk_path = _ALEPH / "DESIGN_KERNEL.md"
+        self.assertTrue(dk_path.exists())
+        dk_tokens = estimate_bpe_tokens(dk_path.read_text(encoding="utf-8"))
+        self.assertLessEqual(dk_tokens, 260)
+
+        rep_be = ExecutivePreflight.analyze("Auditar RLS PostgreSQL 18 y reparar bug Z3 en backend", repo_root=str(_ROOT))
+        self.assertFalse(rep_be["is_design_turn"])
+        self.assertIsNone(rep_be["design_mode"])
+        self.assertIsNone(rep_be["design_stack_hint"])
+        self.assertLessEqual(rep_be["executive_brief_bpe_tokens"], 320)
+        self.assertNotIn("[DESIGN]", rep_be["executive_brief"])
+
+    def test_three_design_modes_and_conditional_jit_dedup(self):
+        import uuid
+        from aleph_core.router.executive_preflight import ExecutivePreflight
+        from lib.aleph_mcp_server import AlephIDEHooksRunner
+
+        c_hyper = ExecutivePreflight.analyze("Construir terminal de trading baja latencia orderbook UI", repo_root=str(_ROOT))
+        self.assertTrue(c_hyper["is_design_turn"])
+        self.assertEqual(c_hyper["design_mode"], "HYPER_SPEED")
+        self.assertIn("aleph_discover_or_invoke", c_hyper["proactive_tools_selected"])
+        self.assertLessEqual(c_hyper["executive_brief_bpe_tokens"], 320)
+
+        c_elite = ExecutivePreflight.analyze("Diseñar dashboard SaaS moderno en React con OKLCH", repo_root=str(_ROOT))
+        self.assertTrue(c_elite["is_design_turn"])
+        self.assertEqual(c_elite["design_mode"], "ELITE_PRODUCT")
+
+        c_soty = ExecutivePreflight.analyze("Landing de lujo Awwwards SOTY con shaders GLSL WebGPU y GSAP", repo_root=str(_ROOT))
+        self.assertTrue(c_soty["is_design_turn"])
+        self.assertEqual(c_soty["design_mode"], "AVANT_GARDE_SOTY")
+
+        runner = AlephIDEHooksRunner()
+        cid = f"r7-conv-{uuid.uuid4().hex[:8]}"
+
+        # Turno backend: 0 inyección de DESIGN_KERNEL
+        r_be = runner.run_hook("PreInvocation", {
+            "conversationId": cid,
+            "invocationNum": 1,
+            "lastUserInput": "Optimizar índice B-tree en PostgreSQL 18",
+            "cwd": str(_ROOT),
+        })
+        self.assertEqual(len(r_be["injectSteps"]), 1)
+        self.assertNotIn("ALEPH DESIGN ENGINE", r_be["injectSteps"][0]["systemMessage"]["systemMessage"])
+
+        # Primer turno UI en la conversación: inyecta executive_brief + DESIGN_KERNEL.md
+        r_ui1 = runner.run_hook("PreInvocation", {
+            "conversationId": cid,
+            "invocationNum": 1,
+            "lastUserInput": "Crear landing Awwwards SOTY con Three.js y WebGPU",
+            "cwd": str(_ROOT),
+        })
+        self.assertEqual(len(r_ui1["injectSteps"]), 2)
+        self.assertIn("ALEPH DESIGN ENGINE", r_ui1["injectSteps"][1]["systemMessage"]["systemMessage"])
+
+        # Segundo turno UI distinto en la MISMA conversación: no re-inyecta DESIGN_KERNEL.md
+        r_ui2 = runner.run_hook("PreInvocation", {
+            "conversationId": cid,
+            "invocationNum": 1,
+            "lastUserInput": "Agregar tabla de precios Bento al dashboard SaaS",
+            "cwd": str(_ROOT),
+        })
+        self.assertEqual(len(r_ui2["injectSteps"]), 1)
+        self.assertIn("[DESIGN] mode=ELITE_PRODUCT", r_ui2["injectSteps"][0]["systemMessage"]["systemMessage"])
+
+    def test_pre_tool_use_anti_slop_and_stop_gate_ui_invariants(self):
+        # Bloquea Lorem ipsum, truncamiento perezoso y layout thrashing en archivos UI
+        self.assertFalse(evaluate_pre_tool_use({"file_path": "Hero.tsx", "code": "export const Hero = () => <p>Lorem ipsum dolor</p>;"})["allowed"])
+        self.assertFalse(evaluate_pre_tool_use({"file_path": "Card.tsx", "code": "export function Card() { // resto del código\n}"})["allowed"])
+        self.assertFalse(evaluate_pre_tool_use({"file_path": "Panel.tsx", "code": "// ... rest of component"})["allowed"])
+        self.assertFalse(evaluate_pre_tool_use({"file_path": "styles.css", "code": ".box { transition: width 0.3s ease; }"})["allowed"])
+
+        # Permite GPU-composited y evita falsos positivos en .py / .md
+        self.assertTrue(evaluate_pre_tool_use({"file_path": "styles.css", "code": ".box { transition: transform 0.2s, opacity 0.2s; }"})["allowed"])
+        self.assertTrue(evaluate_pre_tool_use({"file_path": "notes.py", "code": "DOC = 'Lorem ipsum example with width transition: width 0.3s'\n"})["allowed"])
+        self.assertTrue(evaluate_pre_tool_use({"file_path": "README.md", "code": "Lorem ipsum // ... rest of"})["allowed"])
+
+        # StopGate CORTE 5: bloquea @keyframes sin prefers-reduced-motion y permite CSS accesible
+        bad_stop = evaluate_stop_gate({
+            "verified": True,
+            "changed_files": {"anim.css": "@keyframes pulse { from { opacity: 0.5; } to { opacity: 1; } }\n.x { animation: pulse 1s infinite; }"},
+            "persist_session_lesson": False,
+        })
+        self.assertEqual(bad_stop["exit_code"], 1)
+        self.assertTrue(bad_stop["incremental_ui_gate"]["ran"])
+        self.assertFalse(bad_stop["incremental_ui_gate"]["safe_to_commit"])
+
+        good_stop = evaluate_stop_gate({
+            "verified": True,
+            "changed_files": {
+                "anim.css": (
+                    "@keyframes pulse { from { opacity: 0.5; } to { opacity: 1; } }\n"
+                    ".x { animation: pulse 1s ease-out; transition: transform 150ms, opacity 150ms; }\n"
+                    "@media (prefers-reduced-motion: reduce) { .x { animation: none; } }\n"
+                )
+            },
+            "persist_session_lesson": False,
+        })
+        self.assertEqual(good_stop["exit_code"], 0)
+        self.assertTrue(good_stop["incremental_ui_gate"]["safe_to_commit"])
+
+    def test_cold_boot_zero_archive_and_sovereign_12_tools(self):
+        import subprocess
+        code = (
+            "import json, os, sys; "
+            "os.environ['ALEPH_MCP_PROFILE'] = 'sovereign'; "
+            "sys.path.insert(0, '.aleph'); "
+            "import aleph_core.engine; "
+            "from hooks.user_prompt_submit import evaluate_user_prompt; "
+            "from hooks.stop_gate import evaluate_stop_gate; "
+            "evaluate_user_prompt({'prompt': 'Optimizar consulta SQL en PostgreSQL 18'}); "
+            "evaluate_stop_gate({'verified': True, 'persist_session_lesson': False}); "
+            "srv = aleph_core.engine.AlephUniversalMCPServer(); "
+            "tools = srv.handle_jsonrpc_request({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'})['result']['tools']; "
+            "arch = [m for m in sys.modules if 'research_archive' in m]; "
+            "print(json.dumps({'tools': len(tools), 'arch': arch}))"
+        )
+        p = subprocess.run([sys.executable, "-B", "-c", code], cwd=str(_ROOT), capture_output=True, text=True, check=True)
+        res = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertEqual(res["tools"], 12)
+        self.assertEqual(res["arch"], [])
 
 
 if __name__ == "__main__":

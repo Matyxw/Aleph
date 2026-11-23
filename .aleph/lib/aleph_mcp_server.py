@@ -1113,7 +1113,20 @@ class AlephIDEHooksRunner:
             sys.stderr.write(f"[aleph_hook] dedup write skipped: {exc}\n")
         return False
 
+    def _agents_rule_is_active(self) -> bool:
+        home_rule = Path(os.path.join(str(Path.home()), ".agents", "plugins", "el-aleph-sovereign", "rules", "AGENTS.md"))
+        if home_rule.is_file():
+            return True
+        if os.name == "nt":
+            win_rule = Path(os.path.join("C:", os.sep, "Windows", "System32", ".agents", "plugins", "el-aleph-sovereign", "rules", "AGENTS.md"))
+            if win_rule.is_file():
+                return True
+        return False
+
     def _on_session_start(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        # AGENTS.md (always-active: true) ya provee el Kernel Ejecutivo; no duplicar ~238 tokens en SessionStart.
+        if self._agents_rule_is_active() and not bool(payload.get("forceInjectKernel", False)):
+            return {"injectSteps": []}
         if self._hook_already_injected(payload, "SessionStart", "v33_kernel"):
             return {"injectSteps": []}
         kernel_path = Path(os.path.join(str(_ALEPH_ROOT), "EXECUTIVE_KERNEL.md"))
@@ -1147,13 +1160,27 @@ class AlephIDEHooksRunner:
 
         cwd_val = str(payload.get("cwd") or "") or None
         prompt_meta = evaluate_user_prompt({"prompt": prompt, "repo_root": cwd_val})
+        steps: List[Dict[str, Any]] = []
         brief = str(prompt_meta.get("executive_brief", "")).strip()
-        if not brief:
-            return {"injectSteps": [], "terminationBehavior": ""}
+        if brief:
+            steps.append({"systemMessage": {"systemMessage": brief}})
+
+        if bool(prompt_meta.get("is_design_turn")):
+            should_inject_dk = True
+            if payload.get("conversationId") or payload.get("sessionId"):
+                should_inject_dk = not self._hook_already_injected(payload, "PreInvocation_DESIGN_KERNEL", "v33_design")
+            if should_inject_dk:
+                dk_path = Path(os.path.join(str(_ALEPH_ROOT), "DESIGN_KERNEL.md"))
+                if dk_path.is_file():
+                    try:
+                        dk_text = dk_path.read_text(encoding="utf-8").strip()
+                        if dk_text:
+                            steps.append({"systemMessage": {"systemMessage": dk_text}})
+                    except OSError as exc:
+                        sys.stderr.write(f"[aleph_hook] DESIGN_KERNEL read failed: {exc}\n")
+
         return {
-            "injectSteps": [
-                {"systemMessage": {"systemMessage": brief}}
-            ],
+            "injectSteps": steps,
             "terminationBehavior": "",
         }
 

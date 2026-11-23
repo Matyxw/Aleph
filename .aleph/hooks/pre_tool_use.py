@@ -47,6 +47,33 @@ def _scan_with_aegis_shield(text: str) -> List[str]:
     return [f"AegisShield [{f.rule_id} - {f.category}]: {f.description}" for f in rep.findings]
 
 
+UI_EXTENSIONS = (".html", ".css", ".scss", ".tsx", ".jsx", ".vue", ".svelte", ".astro")
+
+UI_ANTI_SLOP_PATTERNS = (
+    (r"\blorem\s+ipsum\b", "AI Slop UI bloqueado: placeholder lorem-ipsum prohibido en interfaz."),
+    (r"(?://|/\*)\s*\.\.\.\s*(?:rest\s+of|existing|más|remaining)", "Código UI truncado perezoso bloqueado (marcador ellipsis rest-of/existing)."),
+    (r"//\s*resto\s+del\s+c[oó]digo\b", "Código UI truncado perezoso bloqueado (comentario resto-del-codigo)."),
+    (r"TODO\s*:\s*implement\s+UI\b", "Placeholder bloqueado (implement-UI pendiente)."),
+    (r"//\s*add\s+remaining\b", "Código UI incompleto bloqueado (add-remaining)."),
+    (
+        r"\btransition(?:-property)?\s*:[^;{}\n]*\b(?:width|height|top|left|right|bottom|margin(?:-(?:top|right|bottom|left))?|padding(?:-(?:top|right|bottom|left))?)\b",
+        "Layout Thrashing 60-120 FPS bloqueado: animá solo propiedades GPU-composited (transform, opacity).",
+    ),
+)
+
+
+def _is_ui_target(file_path_str: str, payload: Dict[str, Any]) -> bool:
+    fp_lower = file_path_str.replace("\\", "/").lower()
+    if re.search(r"(?:^|/)(?:tests?|__tests__)/|\.(?:test|spec)\.[a-z]+$", fp_lower):
+        return False
+    if fp_lower.endswith((".py", ".md", ".json")):
+        return False
+    if fp_lower.endswith(UI_EXTENSIONS):
+        return True
+    lang = str(payload.get("language", "") or "").lower()
+    return lang in ("html", "css", "scss", "tsx", "jsx", "vue", "svelte", "astro")
+
+
 def _validate_python_ast_fragment(code_content: str, payload: Dict[str, Any]) -> Optional[str]:
     """
     Valida sintaxis AST de Python soportando tanto archivos completos como fragmentos parciales
@@ -116,12 +143,18 @@ def evaluate_pre_tool_use(payload: Dict[str, Any]) -> Dict[str, Any]:
                 blocked = True
                 reasons.append(msg)
 
+        file_path_str = str(payload.get("file_path", payload.get("Path", "")) or "")
+        if _is_ui_target(file_path_str, payload):
+            for pat, msg in UI_ANTI_SLOP_PATTERNS:
+                if re.search(pat, code_content, re.IGNORECASE):
+                    blocked = True
+                    reasons.append(msg)
+
         aegis_code_findings = _scan_with_aegis_shield(code_content)
         if aegis_code_findings:
             blocked = True
             reasons.extend(aegis_code_findings)
 
-        file_path_str = str(payload.get("file_path", payload.get("Path", "")) or "")
         if payload.get("language") == "python" or file_path_str.endswith(".py"):
             ast_err = _validate_python_ast_fragment(code_content, payload)
             if ast_err:

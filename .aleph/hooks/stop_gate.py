@@ -11,10 +11,95 @@ import logging
 import math
 import os
 from pathlib import Path
+import re
 import sys
 from typing import Any, Dict, List, Optional
 
 _LOG = logging.getLogger(__name__)
+
+UI_FILE_EXTENSIONS = (".html", ".css", ".scss", ".tsx", ".jsx", ".vue", ".svelte", ".astro")
+_LAYOUT_THRASH_RE = re.compile(
+    r"\btransition(?:-property)?\s*:[^;{}\n]*\b(?:all|width|height|top|left|right|bottom|margin(?:-(?:top|right|bottom|left))?|padding(?:-(?:top|right|bottom|left))?)\b",
+    re.IGNORECASE,
+)
+_ANIM_DECL_RE = re.compile(r"@keyframes\b|\banimation(?:-name)?\s*:", re.IGNORECASE)
+_AI_SLOP_RE = re.compile(
+    r"\blorem\s+ipsum\b|//\s*resto\s+del\s+c[oó]digo|(?://|/\*)\s*\.\.\.\s*(?:rest\s+of|existing|remaining)|TODO\s*:\s*implement\s+UI",
+    re.IGNORECASE,
+)
+_FIXED_WIDE_RE = re.compile(r"(?:\bmin-width|\bwidth)\s*:\s*(?:[4-9]\d{2}|\d{4,})px\b", re.IGNORECASE)
+
+
+def _run_incremental_ui_gate(payload: Dict[str, Any], repo_root: Path) -> Dict[str, Any]:
+    """Auditoría determinista UI en cierre (solo se activa si changed_files incluye archivos UI)."""
+    default_ui = {
+        "ran": False,
+        "safe_to_commit": True,
+        "inspected_files": 0,
+        "blocking_violations": [],
+        "advisory_findings": [],
+    }
+    raw_changed = payload.get("changed_files")
+    if not raw_changed:
+        return default_ui
+
+    ui_files: Dict[str, str] = {}
+    if isinstance(raw_changed, dict):
+        for rel_p, content in raw_changed.items():
+            key = str(rel_p)
+            if key.lower().endswith(UI_FILE_EXTENSIONS) and isinstance(content, str):
+                ui_files[key] = content
+    elif isinstance(raw_changed, (list, tuple)):
+        for item in raw_changed:
+            rel_str = str(item)
+            if not rel_str.lower().endswith(UI_FILE_EXTENSIONS):
+                continue
+            cand = Path(rel_str)
+            if not cand.is_file():
+                cand = Path(os.path.join(str(repo_root), rel_str))
+            if cand.is_file():
+                try:
+                    ui_files[rel_str] = cand.read_text(encoding="utf-8", errors="ignore")
+                except OSError as exc:
+                    _LOG.debug("Skipping unreadable UI file %s: %s", rel_str, exc)
+
+    if not ui_files:
+        return default_ui
+
+    aleph_lib = os.path.join(str(repo_root), ".aleph", "lib")
+    if aleph_lib not in sys.path:
+        sys.path.insert(0, aleph_lib)
+
+    zero_literal_cls = None
+    try:
+        from aleph_token_compiler import ZeroLiteralCSSValidator
+        zero_literal_cls = ZeroLiteralCSSValidator
+    except ImportError as exc:
+        _LOG.debug("ZeroLiteralCSSValidator lazy import skipped: %s", exc)
+
+    blocking: List[str] = []
+    advisories: List[str] = []
+    for rel_name, src in ui_files.items():
+        if _AI_SLOP_RE.search(src):
+            blocking.append(f"[{rel_name}] AI_SLOP_OR_TRUNCATION detectado (placeholder o código truncado).")
+        if _LAYOUT_THRASH_RE.search(src):
+            blocking.append(f"[{rel_name}] LAYOUT_THRASHING_TRANSITION detectado (usar solo transform/opacity).")
+        if _ANIM_DECL_RE.search(src) and "prefers-reduced-motion" not in src and "useReducedMotion" not in src and "motion-reduce:" not in src:
+            blocking.append(f"[{rel_name}] MISSING_REDUCED_MOTION: animación sin prefers-reduced-motion.")
+        if _FIXED_WIDE_RE.search(src) and "max-width" not in src and "overflow-x" not in src:
+            advisories.append(f"[{rel_name}] HORIZONTAL_OVERFLOW_RISK: ancho fijo >=400px sin max-width/overflow-x.")
+        if zero_literal_cls is not None and rel_name.lower().endswith((".css", ".scss")):
+            lit_issues = zero_literal_cls.validate_css(src)
+            if lit_issues:
+                advisories.append(f"[{rel_name}] {len(lit_issues)} color(es) literal(es) fuera de tokens var(--*)/OKLCH.")
+
+    return {
+        "ran": True,
+        "safe_to_commit": len(blocking) == 0,
+        "inspected_files": len(ui_files),
+        "blocking_violations": blocking,
+        "advisory_findings": advisories,
+    }
 
 
 def compute_epistemic_friction_index(
@@ -216,9 +301,12 @@ def evaluate_stop_gate(payload: Dict[str, Any]) -> Dict[str, Any]:
     safe_payload = payload if isinstance(payload, dict) else {}
     repo_root = Path(__file__).resolve().parents[2]
     z3_gate = _run_incremental_z3_gate(safe_payload, repo_root)
+    ui_gate = _run_incremental_ui_gate(safe_payload, repo_root)
 
     verified = bool(safe_payload.get("verified", True))
     if z3_gate.get("ran") and not z3_gate.get("safe_to_commit"):
+        verified = False
+    if ui_gate.get("ran") and not ui_gate.get("safe_to_commit"):
         verified = False
 
     retries = int(safe_payload.get("retries_count", 0))
@@ -298,6 +386,7 @@ def evaluate_stop_gate(payload: Dict[str, Any]) -> Dict[str, Any]:
         "persisted_db_path": persisted_db_path,
         "promoted_rule_ids": promoted_rule_ids,
         "incremental_z3_gate": z3_gate,
+        "incremental_ui_gate": ui_gate,
         **auto_gepa,
         "exit_code": 0 if verified else 1,
         "hook": "Stop",

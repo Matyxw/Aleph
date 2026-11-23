@@ -37,32 +37,61 @@ SOVEREIGN_12_TOOLS: Tuple[str, ...] = (
 )
 
 _BASELINE_RULES: Tuple[Dict[str, str], ...] = (
-    {
-        "rule_id": "REG-001",
-        "category": "Seguridad",
-        "directive": "Validar contratos AST/Z3 y guardas de frontera antes de ejecutar o comitear.",
-    },
-    {
-        "rule_id": "REG-002",
-        "category": "Routing",
-        "directive": "Enrutar cómputo asimétrico Tier 0..3 ($0 marginal Gemini 4 Argon/Neon/Hydrogen).",
-    },
-    {
-        "rule_id": "REG-006",
-        "category": "Código",
-        "directive": "Exigir terminación verificable en bucles, cero except silencioso y AegisShield.",
-    },
-    {
-        "rule_id": "REG-007",
-        "category": "Arquitectura",
-        "directive": "Correr torneo Pareto (GlobalOptimalityGate) y elegir la solución SOTA #1.",
-    },
+    {"rule_id": "REG-001", "category": "Seguridad", "directive": "Validar contratos AST/Z3 y guardas antes de ejecutar."},
+    {"rule_id": "REG-002", "category": "Routing", "directive": "Routing asimétrico Tier 0..3 ($0 en Gemini 4)."},
+    {"rule_id": "REG-006", "category": "Código", "directive": "Exigir terminación en bucles y cero except silencioso."},
+    {"rule_id": "REG-007", "category": "Arquitectura", "directive": "Torneo Pareto: implementar solución SOTA #1."},
 )
 
 _DESTRUCTIVE_RE = re.compile(
     r"\b(?:rm\s+-rf|drop\s+table|truncate\s+table|delete\s+from|git\s+push\s+--force|format\s+[a-z]:)\b",
     re.IGNORECASE,
 )
+
+_UI_FILE_EXTS = (".html", ".css", ".scss", ".tsx", ".jsx", ".vue", ".svelte", ".astro")
+_UI_INTENT_RE = re.compile(
+    r"(?:\b(?:ui|ux|frontend|interfaz|dise[nñ]o|design|landing|dashboard|componente|css|html|scss|"
+    r"tailwind|react|next\.?js|svelte|astro|solidjs|three\.?js|webgl|webgpu|glsl|shader|"
+    r"gsap|lenis|figma|oklch|wcag|bento|swiftui|flutter|portfolio|awwwards|soty|"
+    r"keyframes|viewport)\b|p[aá]gina\s+web|web\s+app)",
+    re.IGNORECASE,
+)
+_AVANT_GARDE_RE = re.compile(
+    r"\b(?:awwwards|soty|lujo|luxury|inmersiv|immersive|webgl|webgpu|glsl|shader|"
+    r"three\.?js|r3f|gsap|lenis|scrolltrigger|portfolio|lanzamiento|launch|3d)\b",
+    re.IGNORECASE,
+)
+_HYPER_SPEED_RE = re.compile(
+    r"\b(?:trading|terminal|orderbook|m[eé]dic|clinic|telemetr|baja\s+latencia|"
+    r"low\s+latency|sub-ms|high\s+density|alta\s+densidad|tabla\s+masiva|monitoring)\b",
+    re.IGNORECASE,
+)
+_STOP_SUFFIXES = {"de", "del", "la", "el", "los", "las", "y", "o", "en", "con", "para", "por", "a", "si"}
+
+
+def _clean_word_truncate(text: str, max_chars: int = 58) -> str:
+    clean = " ".join(str(text or "").split())
+    if len(clean) <= max_chars:
+        return clean
+    clipped = clean[:max_chars]
+    if " " in clipped:
+        clipped = clipped.rsplit(" ", 1)[0]
+    words = clipped.rstrip(" ,;:-").split(" ")
+    while len(words) > 3 and (words[-1].lower().strip(".,;:") in _STOP_SUFFIXES or words[-1].startswith("(")):
+        words.pop()
+    return " ".join(words).rstrip(" ,;:-(")
+
+
+def _classify_design_turn(safe_prompt: str, files: List[str]) -> Tuple[bool, Optional[str], Optional[str]]:
+    has_ui_file = any(str(f).lower().endswith(_UI_FILE_EXTS) for f in files)
+    has_ui_intent = bool(_UI_INTENT_RE.search(safe_prompt))
+    if not (has_ui_file or has_ui_intent):
+        return False, None, None
+    if _AVANT_GARDE_RE.search(safe_prompt):
+        return True, "AVANT_GARDE_SOTY", "Three.js/R3F + WebGPU/GLSL + GSAP + Lenis"
+    if _HYPER_SPEED_RE.search(safe_prompt):
+        return True, "HYPER_SPEED", "Astro/Svelte5 o SolidJS + CSS @layer Zero-Jank"
+    return True, "ELITE_PRODUCT", "Next.js/React19 + TS + OKLCH + Bento 4/8px + SpringPhysics"
 
 
 def _tokenize(text: str) -> set:
@@ -108,7 +137,7 @@ def _load_candidate_rules(root_path: Path) -> List[Dict[str, str]]:
                 collected[rid] = {
                     "rule_id": rid,
                     "category": str(row[1]),
-                    "directive": f"SI {str(row[2])[:70]} -> {str(row[3])[:95]}",
+                    "directive": _clean_word_truncate(str(row[3] or row[2]), 120),
                 }
         except Exception as exc:
             _LOG.debug("Skipping runtime evolution db recall: %s", exc)
@@ -136,12 +165,16 @@ def _recall_top_rules(prompt_lower: str, root_path: Path, limit: int = 3) -> Lis
         top.append({
             "rule_id": str(r.get("rule_id", "")),
             "category": str(r.get("category", "")),
-            "directive": str(r.get("directive", ""))[:160],
+            "directive": _clean_word_truncate(str(r.get("directive", "")), 140),
         })
     return top
 
 
-def _select_jit_tools(prompt_lower: str, changed_files: List[str]) -> Tuple[List[str], Optional[str]]:
+def _select_jit_tools(
+    prompt_lower: str,
+    changed_files: List[str],
+    is_design_turn: bool = False,
+) -> Tuple[List[str], Optional[str]]:
     selected: List[str] = []
     bm25_hint: Optional[str] = None
 
@@ -149,6 +182,9 @@ def _select_jit_tools(prompt_lower: str, changed_files: List[str]) -> Tuple[List
         if name in SOVEREIGN_12_TOOLS and name not in selected:
             selected.append(name)
 
+    if is_design_turn:
+        _add("aleph_discover_or_invoke")
+        bm25_hint = "aleph_design_create aleph_design_compile aleph_design_audit aleph_audit_and_repair_design_tokens_wcag"
     if any(k in prompt_lower for k in ("rls", "supabase", "postgres", "sql", "ddl", "schema", "migration")):
         _add("aleph_verify_deep_supabase_rls")
     if any(k in prompt_lower for k in ("taint", "ssrf", "xss", "security", "seguridad", "injection", "auth", "token", "secret")):
@@ -163,9 +199,9 @@ def _select_jit_tools(prompt_lower: str, changed_files: List[str]) -> Tuple[List
     if any(k in prompt_lower for k in ("gepa", "learn", "evol", "bitacora", "regla", "rule", "memory")):
         _add("aleph_bitacora_query_hipporag2_ppr")
         _add("aleph_omega_dgm_alphaevolve_self_improve")
-    if any(k in prompt_lower for k in ("ui", "ux", "css", "react", "html", "design", "fsm", "ledger", "equivalence")):
+    if not is_design_turn and any(k in prompt_lower for k in ("fsm", "ledger", "equivalence")):
         _add("aleph_discover_or_invoke")
-        bm25_hint = "ui_design wcag oklch | relational_equivalence | fsm_ledger"
+        bm25_hint = "relational_equivalence | fsm_ledger"
 
     if changed_files and "aleph_verify_and_repair" not in selected:
         _add("aleph_verify_and_repair")
@@ -266,11 +302,12 @@ class ExecutivePreflight:
             },
         }
 
-        tools_selected, bm25_hint = _select_jit_tools(prompt_lower, files)
+        is_design_turn, design_mode, design_stack_hint = _classify_design_turn(safe_prompt, files)
+        tools_selected, bm25_hint = _select_jit_tools(prompt_lower, files, is_design_turn=is_design_turn)
         recalled_rules = _recall_top_rules(prompt_lower, root_path, limit=3)
 
         rule_tags = "; ".join(
-            f"{r.get('rule_id')}: {str(r.get('directive', ''))[:55]}" for r in recalled_rules
+            f"{r.get('rule_id')}: {_clean_word_truncate(str(r.get('directive', '')), 56)}" for r in recalled_rules
         )
         tools_csv = ", ".join(tools_selected)
         discover_note = f" | BM25:{bm25_hint}" if bm25_hint else ""
@@ -280,9 +317,16 @@ class ExecutivePreflight:
             f"[JIT-TOOLS] {tools_csv}{discover_note}",
             f"[BITACORA-TOP3] {rule_tags}",
         ]
+        if is_design_turn and design_mode:
+            brief_lines.insert(2, f"[DESIGN] mode={design_mode} | stack={design_stack_hint}")
         executive_brief = "\n".join(brief_lines)
-        while estimate_bpe_tokens(executive_brief) > cls.MAX_BRIEF_BPE_TOKENS and len(executive_brief) > 80:
-            executive_brief = executive_brief[: int(len(executive_brief) * 0.85)].rstrip()
+        while estimate_bpe_tokens(executive_brief) > cls.MAX_BRIEF_BPE_TOKENS and "\n" in executive_brief:
+            lines_cur = executive_brief.splitlines()
+            if len(lines_cur[-1]) > 48:
+                lines_cur[-1] = _clean_word_truncate(lines_cur[-1], int(len(lines_cur[-1]) * 0.8))
+                executive_brief = "\n".join(lines_cur)
+            else:
+                break
 
         bpe_tokens = estimate_bpe_tokens(executive_brief)
         latency_ms = round((time.perf_counter_ns() - t0) / 1_000_000.0, 3)
@@ -292,6 +336,9 @@ class ExecutivePreflight:
             "proactive_tools_selected": tools_selected,
             "bitacora_rules_recalled": recalled_rules,
             "execution_strategy": execution_strategy,
+            "is_design_turn": is_design_turn,
+            "design_mode": design_mode,
+            "design_stack_hint": design_stack_hint,
             "executive_brief": executive_brief,
             "executive_brief_bpe_tokens": bpe_tokens,
             "bm25_discover_pattern": bm25_hint,
