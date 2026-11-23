@@ -1016,6 +1016,18 @@ def cmd_fetch_hdri() -> int:
     return cli_fetch_hdri(sys.argv[2:])
 
 
+def cmd_extract_dna() -> int:
+    """Extrae ADN de diseño vivo en formato W3C DTCG 2025.10."""
+    from aleph_core.visual.studio_assets import cli_extract_dna
+    return cli_extract_dna(sys.argv[2:])
+
+
+def cmd_visual_evolve() -> int:
+    """Gestiona el archivo evolutivo MAP-Elites + Bradley-Terry/Elo visual."""
+    from aleph_core.visual.visual_evolve import cli_visual_evolve
+    return cli_visual_evolve(sys.argv[2:])
+
+
 def __getattr__(name: str):
     if name.startswith("cmd_"):
         from aleph_core.research_archive import cli_archive as _ca
@@ -1122,6 +1134,10 @@ if __name__ == "__main__":
         sys.exit(cmd_visual_audit(sys.argv[2], capture_scroll_storyboard=("--no-storyboard" not in sys.argv[2:])))
     elif cmd == "fetch-hdri":
         sys.exit(cmd_fetch_hdri())
+    elif cmd == "extract-dna":
+        sys.exit(cmd_extract_dna())
+    elif cmd == "visual-evolve":
+        sys.exit(cmd_visual_evolve())
     else:
         from aleph_core.research_archive.cli_archive import dispatch_archived_cli_command
         rc = dispatch_archived_cli_command(cmd, sys.argv)

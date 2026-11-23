@@ -169,8 +169,9 @@ _WEBGL_FONTS_JS = """async () => {
   return { loadedFonts, canvases };
 }"""
 
-_MOTION_LAYOUT_JS = """async () => {
+_MOTION_LAYOUT_JS = """async (sampleScrollFps) => {
   const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+  const vh = window.innerHeight || document.documentElement.clientHeight || 0;
   const fixedHeaders = [];
   for (const el of Array.from(document.querySelectorAll('header, nav'))) {
     const st = window.getComputedStyle(el);
@@ -179,51 +180,79 @@ _MOTION_LAYOUT_JS = """async () => {
       fixedHeaders.push({ el, rect: el.getBoundingClientRect() });
     }
   }
+  const canvasRects = Array.from(document.querySelectorAll('canvas')).map((c) => c.getBoundingClientRect()).filter((r) => r.width > 20 && r.height > 20);
   const clippedSelectors = [];
   const overlapSelectors = [];
+  const unshieldedRects = [];
+  const hasShield = (el) => {
+    let cur = el;
+    while (cur && cur !== document.body && cur !== document.documentElement) {
+      const st = window.getComputedStyle(cur);
+      const m = (st.backgroundColor || '').match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/);
+      const alpha = m ? (m[4] !== undefined ? parseFloat(m[4]) : 1) : 0;
+      if (alpha >= 0.72) return true;
+      cur = cur.parentElement;
+    }
+    return false;
+  };
   for (const el of Array.from(document.querySelectorAll('h1, h2, h3, p'))) {
     const st = window.getComputedStyle(el);
-    if (st.display === 'none' || st.visibility === 'hidden') continue;
+    if (st.display === 'none' || st.visibility === 'hidden' || parseFloat(st.opacity) < 0.1) continue;
     const r = el.getBoundingClientRect();
-    if (r.width <= 0 || r.height <= 0) continue;
+    if (r.width <= 0 || r.height <= 0 || r.bottom <= 0 || r.top >= vh) continue;
     const tag = el.tagName.toLowerCase() + (el.id ? '#' + el.id : '');
     if (r.right > vw + 2 || r.left < -2) {
       if (clippedSelectors.length < 10) clippedSelectors.push(tag);
     }
+    let inHeader = false;
     for (const fh of fixedHeaders) {
-      if (!fh.el.contains(el) && r.top >= 0 && r.top < fh.rect.bottom - 2 && r.bottom > fh.rect.top + 2) {
+      if (fh.el.contains(el)) inHeader = true;
+      else if (r.top >= 0 && r.top < fh.rect.bottom - 2 && r.bottom > fh.rect.top + 2) {
         if (overlapSelectors.length < 10) overlapSelectors.push(tag);
       }
     }
+    if (!inHeader && !hasShield(el) && unshieldedRects.length < 10) {
+      const overlapsCanvas = canvasRects.some((cr) => !(r.right < cr.left || r.left > cr.right || r.bottom < cr.top || r.top > cr.bottom));
+      unshieldedRects.push({ selector: tag, left: r.left, right: r.right, top: r.top, bottom: r.bottom, overlapsCanvas });
+    }
   }
-  const stamps = [];
-  const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-  const startY = window.scrollY;
-  await new Promise((resolve) => {
-    let i = 0;
-    const step = (ts) => {
-      stamps.push(ts);
-      if (maxScroll > 20 && i < 12) window.scrollTo(0, Math.round((maxScroll * 0.25 * i) / 12));
-      i += 1;
-      if (i <= 12) requestAnimationFrame(step);
-      else resolve();
-    };
-    requestAnimationFrame(step);
-  });
-  window.scrollTo(0, startY);
-  const deltas = [];
-  for (let i = 1; i < stamps.length; i++) deltas.push(Math.max(1.0, stamps[i] - stamps[i - 1]));
-  const avgDelta = deltas.length ? deltas.reduce((a, b) => a + b, 0) / deltas.length : 16.67;
-  const maxDelta = deltas.length ? Math.max(...deltas) : 16.67;
-  const longFrames = deltas.filter((d) => d > 50).length;
-  return {
-    motion: {
+  const h1El = document.querySelector('h1');
+  const h1Px = h1El ? (parseFloat(window.getComputedStyle(h1El).fontSize) || 36) : 36;
+  const bodyPx = parseFloat(window.getComputedStyle(document.body).fontSize) || 16;
+  const typeScaleRatio = Math.round((h1Px / Math.max(1, bodyPx)) * 1000) / 1000;
+  let motion = null;
+  if (sampleScrollFps) {
+    const stamps = [];
+    const maxScroll = Math.max(0, document.documentElement.scrollHeight - vh);
+    const startY = window.scrollY;
+    await new Promise((resolve) => {
+      let i = 0;
+      const step = (ts) => {
+        stamps.push(ts);
+        if (maxScroll > 20 && i < 12) window.scrollTo(0, Math.round((maxScroll * 0.25 * i) / 12));
+        i += 1;
+        if (i <= 12) requestAnimationFrame(step);
+        else resolve();
+      };
+      requestAnimationFrame(step);
+    });
+    window.scrollTo(0, startY);
+    const deltas = [];
+    for (let i = 1; i < stamps.length; i++) deltas.push(Math.max(1.0, stamps[i] - stamps[i - 1]));
+    const avgDelta = deltas.length ? deltas.reduce((a, b) => a + b, 0) / deltas.length : 16.67;
+    const maxDelta = deltas.length ? Math.max(...deltas) : 16.67;
+    motion = {
       cls: Math.round(Number(window.__alephCls || 0) * 10000) / 10000,
       avg_fps: Math.round((1000.0 / avgDelta) * 10) / 10,
       min_frame_fps: Math.round((1000.0 / maxDelta) * 10) / 10,
       frames_sampled: deltas.length,
-      long_frames_over_50ms: longFrames,
-    },
+      long_frames_over_50ms: deltas.filter((d) => d > 50).length,
+    };
+  }
+  return {
+    motion,
+    typeScaleRatio,
+    unshieldedRects,
     layout: {
       clipped_text_count: clippedSelectors.length,
       clipped_selectors: clippedSelectors,
@@ -256,6 +285,8 @@ class VisualAuditReport:
     loaded_web_fonts: List[str] = field(default_factory=list)
     motion_telemetry: Dict[str, Any] = field(default_factory=dict)
     layout_telemetry: Dict[str, Any] = field(default_factory=dict)
+    perceptual_cv_metrics: Dict[str, Any] = field(default_factory=dict)
+    saliency_text_clearance: Dict[str, Any] = field(default_factory=dict)
     violations: List[str] = field(default_factory=list)
     summary: str = ""
 
@@ -269,7 +300,7 @@ class _QuietHTTPHandler(http.server.SimpleHTTPRequestHandler):
 
 
 class VisualBrowserAuditor:
-    """Orquesta auditoría DOM/CSS/WebGL/FPS/CLS en Chromium real para 3 viewports y storyboard."""
+    """Orquesta auditoría DOM/CSS/WebGL/FPS/CLS/CV en Chromium real para 3 viewports."""
 
     def __init__(self, repo_root: Optional[str] = None):
         self.repo_root = os.path.abspath(repo_root) if repo_root else os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -316,6 +347,7 @@ class VisualBrowserAuditor:
 
     def _audit_url(self, audit_id: str, label: str, url: str, shot_dir: str, timeout_ms: int, capture_scroll_storyboard: bool = True) -> VisualAuditReport:
         from playwright.sync_api import sync_playwright
+        from aleph_core.visual.visual_evolve import analyze_png_perceptual_and_clearance
 
         console_errors: List[str] = []
         page_errors: List[str] = []
@@ -328,6 +360,8 @@ class VisualBrowserAuditor:
         webgl_audit: Dict[str, Any] = {"canvas_count": 0, "canvases": [], "context_lost_count": 0, "monochrome_count": 0, "all_healthy": True}
         motion_telemetry: Dict[str, Any] = {"cls": 0.0, "avg_fps": 0.0, "min_frame_fps": 0.0, "frames_sampled": 0, "long_frames_over_50ms": 0}
         layout_telemetry: Dict[str, Any] = {"clipped_text_count": 0, "clipped_selectors": [], "fixed_header_overlap_count": 0, "overlap_selectors": []}
+        perceptual_cv: Dict[str, Any] = {}
+        clearance_rep: Dict[str, Any] = {"clearance_score": 100.0, "unshielded_blocks": 0, "colliding_selectors": [], "ultrawide_colliding_selectors": [], "max_underlying_saliency": 0.0}
         max_overflow, animations_total, has_reduced_rule = 0.0, 0, False
         load_timing: Dict[str, float] = {"domcontentloaded_ms": 0.0, "load_ms": 0.0}
 
@@ -374,12 +408,16 @@ class VisualBrowserAuditor:
                             lost_n = sum(1 for c in c_list if c.get("contextLost") or c.get("width", 0) <= 0 or c.get("height", 0) <= 0)
                             mono_n = sum(1 for c in c_list if c.get("monochrome"))
                             webgl_audit = {"canvas_count": len(c_list), "canvases": c_list, "context_lost_count": lost_n, "monochrome_count": mono_n, "all_healthy": (lost_n == 0 and mono_n == 0)}
-                        ml = page.evaluate(_MOTION_LAYOUT_JS)
+                        ml = page.evaluate(_MOTION_LAYOUT_JS, True)
                         if isinstance(ml, dict):
                             if isinstance(ml.get("motion"), dict):
                                 motion_telemetry = dict(ml.get("motion") or {})
                             if isinstance(ml.get("layout"), dict):
                                 layout_telemetry = dict(ml.get("layout") or {})
+                            perceptual_cv, desk_clr = analyze_png_perceptual_and_clearance(
+                                shot_path, vw, vh, list(ml.get("unshieldedRects") or []), float(ml.get("typeScaleRatio") or 2.0)
+                            )
+                            clearance_rep.update(desk_clr)
                         if capture_scroll_storyboard:
                             max_scroll = int(page.evaluate("Math.max(0, document.documentElement.scrollHeight - window.innerHeight)") or 0)
                             if max_scroll > 80:
@@ -390,6 +428,14 @@ class VisualBrowserAuditor:
                                     page.screenshot(path=s_path, full_page=False)
                                     screenshots[key] = s_path
                                 page.evaluate("window.scrollTo(0, 0)")
+                    elif vp_name == "ultrawide_2560":
+                        uw_ml = page.evaluate(_MOTION_LAYOUT_JS, False)
+                        if isinstance(uw_ml, dict):
+                            _uw_cv, uw_clr = analyze_png_perceptual_and_clearance(
+                                shot_path, vw, vh, list(uw_ml.get("unshieldedRects") or []), float(uw_ml.get("typeScaleRatio") or 2.0)
+                            )
+                            clearance_rep["ultrawide_colliding_selectors"] = list(uw_clr.get("colliding_selectors") or [])
+                            clearance_rep["ultrawide_clearance_score"] = uw_clr.get("clearance_score", 100.0)
 
                 reduced_ok = True
                 if animations_total > 0 and not has_reduced_rule:
@@ -425,7 +471,8 @@ class VisualBrowserAuditor:
             reduced_motion_ok=reduced_ok, animations_detected=animations_total, load_timing_ms=load_timing,
             screenshots=screenshots, webgl_canvas_audit=webgl_audit, loaded_web_fonts=loaded_web_fonts,
             motion_telemetry=motion_telemetry, layout_telemetry=layout_telemetry,
-            violations=violations, summary=f"[{'PASS' if passed else 'FAIL'}] {engine} | overflow={max_overflow:.0f}px | cls={motion_telemetry.get('cls', 0.0)} | violations={len(violations)}",
+            perceptual_cv_metrics=perceptual_cv, saliency_text_clearance=clearance_rep,
+            violations=violations, summary=f"[{'PASS' if passed else 'FAIL'}] {engine} | overflow={max_overflow:.0f}px | cls={motion_telemetry.get('cls', 0.0)} | pqi={perceptual_cv.get('perceptual_quality_index', 0.0)} | violations={len(violations)}",
         )
 
 

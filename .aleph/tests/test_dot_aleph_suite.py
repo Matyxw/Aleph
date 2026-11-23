@@ -911,5 +911,93 @@ class TestRonda11StudioCreativeUpgrade(unittest.TestCase):
             self.assertTrue(Path(hdr["dest_path"]).is_file())
 
 
+class TestRonda11VisualSingularity(unittest.TestCase):
+    def test_ronda11_16_skills_zero_dupes_and_strict_budgets(self):
+        import os
+        from aleph_core.router.dispatcher import estimate_bpe_tokens
+
+        cfg = os.path.join(os.path.expanduser("~"), ".gemini", "config", "skills")
+        agents_dup = os.path.join(os.path.expanduser("~"), ".agents", "skills")
+        dirs = sorted(d for d in os.listdir(cfg) if os.path.isdir(os.path.join(cfg, d)))
+        self.assertEqual(len(dirs), 16, f"Expected 16 skills, found {len(dirs)}: {dirs}")
+        for d in dirs:
+            self.assertFalse(os.path.exists(os.path.join(agents_dup, d)))
+
+        for fname, max_bpe in ((".aleph/DESIGN_KERNEL.md", 260), (".aleph/design_modes/elite_product.md", 260), (".aleph/design_modes/avant_garde_soty.md", 260), (".aleph/design_modes/hyper_speed.md", 260)):
+            bpe = estimate_bpe_tokens((_ROOT / fname).read_text(encoding="utf-8"))
+            self.assertLessEqual(bpe, max_bpe, f"{fname} BPE {bpe} > {max_bpe}")
+
+        for py_rel, max_lines in (("aleph_core/engine.py", 1901), ("aleph_core/verification/z3_prover.py", 4026), ("aleph_core/visual/browser_auditor.py", 490), ("aleph_core/visual/studio_assets.py", 180), ("aleph_core/visual/visual_evolve.py", 340), ("aleph_core/router/executive_preflight.py", 360)):
+            n = len((_ROOT / py_rel).read_text(encoding="utf-8").splitlines())
+            self.assertLessEqual(n, max_lines, f"{py_rel} lines {n} > {max_lines}")
+
+    def test_ronda11_perceptual_cv_clearance_and_motion_telemetry(self):
+        from aleph_core.visual.browser_auditor import VisualBrowserAuditor
+
+        html = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8" />
+<style>body{margin:0;background:#08090B;color:#F4F5F7;min-height:2400px;}header{position:fixed;top:0;left:0;right:0;height:48px;background:rgba(8,9,11,.9);}main{padding:96px 24px;display:flex;flex-wrap:wrap;gap:24px;justify-content:space-between;}canvas{max-width:100%;width:480px;height:300px;}</style>
+</head><body><header>NAV</header><main><div><h1>KRONOS SINGULARITY</h1><p>Precision acoustic synthesis.</p></div><canvas id="c" width="480" height="300"></canvas></main>
+<script>const x=document.getElementById('c').getContext('2d');const g=x.createLinearGradient(0,0,480,300);g.addColorStop(0,'#FF4D00');g.addColorStop(1,'#4FD1FF');x.fillStyle=g;x.fillRect(0,0,480,300);</script>
+</body></html>"""
+        rep = VisualBrowserAuditor(repo_root=str(_ROOT)).audit(html_content=html).to_dict()
+        self.assertTrue(rep["passed"], f"Audit failed: {rep}")
+        mt = rep.get("motion_telemetry") or {}
+        self.assertIn("cls", mt)
+        self.assertGreater(mt.get("avg_fps", 0.0), 0.0)
+        cv = rep.get("perceptual_cv_metrics") or {}
+        for k in ("edge_clutter_density", "focal_saliency_concentration", "focal_centroid_xy", "negative_space_ratio", "saturated_accent_ratio", "typography_scale_ratio", "perceptual_quality_index"):
+            self.assertIn(k, cv)
+        clr = rep.get("saliency_text_clearance") or {}
+        self.assertIn("clearance_score", clr)
+        self.assertGreaterEqual(clr.get("clearance_score", 0.0), 70.0)
+
+    def test_ronda11_hdri_and_live_w3c_design_dna_extractor(self):
+        import tempfile
+        from aleph_core.visual.studio_assets import extract_live_design_dna, fetch_polyhaven_studio_hdri
+
+        with tempfile.TemporaryDirectory() as tmpd:
+            hdr = fetch_polyhaven_studio_hdri("studio_small_09", "1k", dest_dir=tmpd)
+            self.assertGreater(hdr.get("bytes", 0), 50000)
+            self.assertTrue(Path(hdr["dest_path"]).is_file())
+            self.assertEqual(len(hdr.get("sha256", "")), 64)
+
+            html_p = Path(tmpd) / "dna.html"
+            html_p.write_text("<!doctype html><html><body style='background:#08090B;color:#F4F5F7;font-size:16px'><h1 style='font-size:48px'>DNA</h1><button style='background:#FF4D00;border-radius:12px;transition:transform 180ms cubic-bezier(0.23,1,0.32,1)'>Go</button></body></html>", encoding="utf-8")
+            dna = extract_live_design_dna(str(html_p))
+            self.assertIn("designtokens.org", dna.get("$schema", ""))
+            self.assertGreaterEqual(dna["summary_metrics"]["typography_scale_ratio"], 2.5)
+
+    def test_ronda11_visual_evolution_engine_map_elites_bias_and_rollback(self):
+        import os, tempfile
+        from aleph_core.visual.visual_evolve import VisualEvolutionEngine, recall_elite_genes
+
+        with tempfile.TemporaryDirectory() as tmpd:
+            dbp = os.path.join(tmpd, "evo.db")
+            eng = VisualEvolutionEngine(db_path=dbp)
+            cand_a = {"genome_id": "g_a", "elo_rating": 1200.0, "perceptual_score": 78.0, "overflow": 0.0, "console_errors": 0, "cls": 0.0, "winning_patterns": ["obsidian_rim"]}
+            cand_b = {"genome_id": "g_b", "elo_rating": 1200.0, "perceptual_score": 84.5, "overflow": 0.0, "console_errors": 0, "cls": 0.0, "winning_patterns": ["leica_titanium_hdri"]}
+
+            tie_res = eng.record_pairwise_match("AVANT_GARDE_SOTY", "3D_MONOLITH", cand_a, cand_b, verdict_ab="A", verdict_ba="B")
+            self.assertTrue(tie_res["position_bias_detected"])
+            self.assertEqual(tie_res["resolved_winner"], "tie")
+
+            win_a = eng.record_pairwise_match("AVANT_GARDE_SOTY", "3D_MONOLITH", cand_a, cand_b, verdict_ab="A", verdict_ba="A")
+            self.assertFalse(win_a["position_bias_detected"])
+            self.assertEqual(win_a["resolved_winner"], "A")
+            snap1 = win_a["snapshot_id"]
+            self.assertIsNotNone(snap1)
+
+            win_b = eng.record_pairwise_match("AVANT_GARDE_SOTY", "3D_MONOLITH", cand_a, cand_b, verdict_ab="B", verdict_ba="B")
+            self.assertEqual(win_b["resolved_winner"], "B")
+            self.assertGreater(win_b["elo_b"], 1200.0)
+            genes = recall_elite_genes("AVANT_GARDE_SOTY", limit=2, db_path=dbp)
+            self.assertEqual(genes[0]["genome_id"], "g_b")
+
+            rb = eng.rollback_genome_snapshot(win_b["snapshot_id"])
+            self.assertTrue(rb["verified_exact"])
+            genes_after = recall_elite_genes("AVANT_GARDE_SOTY", limit=2, db_path=dbp)
+            self.assertEqual(genes_after[0]["genome_id"], "g_a")
+
+
 if __name__ == "__main__":
     unittest.main()

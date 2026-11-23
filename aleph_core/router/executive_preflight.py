@@ -324,10 +324,14 @@ class ExecutivePreflight:
                 skills_tag = "design-taste-frontend+impeccable+emil-design-eng+review-animations"
             else:
                 skills_tag = "design-taste-frontend+impeccable"
-            brief_lines.insert(
-                2,
-                f"[DESIGN] mode={design_mode} | skills={skills_tag} | stack={design_stack_hint}",
-            )
+            gene_tag = ""
+            evo_db = os.path.join(str(root_path), ".aleph", "runtime", "visual_evolution.db")
+            if os.path.isfile(evo_db):
+                from aleph_core.visual.visual_evolve import recall_elite_genes
+                genes = recall_elite_genes(design_mode, limit=1, db_path=evo_db)
+                if genes:
+                    gene_tag = f" | gene={genes[0].get('visual_paradigm')}@{int(round(float(genes[0].get('elo_rating', 1200.0))))}"
+            brief_lines.insert(2, f"[DESIGN] mode={design_mode} | skills={skills_tag} | stack={design_stack_hint}{gene_tag}")
         executive_brief = "\n".join(brief_lines)
         while estimate_bpe_tokens(executive_brief) > cls.MAX_BRIEF_BPE_TOKENS and "\n" in executive_brief:
             lines_cur = executive_brief.splitlines()
