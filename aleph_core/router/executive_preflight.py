@@ -88,10 +88,10 @@ def _classify_design_turn(safe_prompt: str, files: List[str]) -> Tuple[bool, Opt
     if not (has_ui_file or has_ui_intent):
         return False, None, None
     if _AVANT_GARDE_RE.search(safe_prompt):
-        return True, "AVANT_GARDE_SOTY", "Three.js/R3F + WebGPU/GLSL + GSAP + Lenis"
+        return True, "AVANT_GARDE_SOTY", "R3F/WebGPU-TSL+HDRI+GSAP+shadcn/@react-bits"
     if _HYPER_SPEED_RE.search(safe_prompt):
         return True, "HYPER_SPEED", "Astro/Svelte5 o SolidJS + CSS @layer Zero-Jank"
-    return True, "ELITE_PRODUCT", "Next.js/React19 + TS + OKLCH + Bento 4/8px + SpringPhysics"
+    return True, "ELITE_PRODUCT", "React19+OKLCH+shadcn/@react-bits+Spring"
 
 
 def _tokenize(text: str) -> set:
@@ -318,11 +318,12 @@ class ExecutivePreflight:
             f"[BITACORA-TOP3] {rule_tags}",
         ]
         if is_design_turn and design_mode:
-            skills_tag = (
-                "design-taste-frontend+impeccable+awwwards-animations+r3f-skills"
-                if design_mode == "AVANT_GARDE_SOTY"
-                else "design-taste-frontend+impeccable"
-            )
+            if design_mode == "AVANT_GARDE_SOTY":
+                skills_tag = "design-taste-frontend+impeccable+awwwards-animations+r3f-skills+threejs-shaders+review-animations"
+            elif design_mode == "ELITE_PRODUCT":
+                skills_tag = "design-taste-frontend+impeccable+emil-design-eng+review-animations"
+            else:
+                skills_tag = "design-taste-frontend+impeccable"
             brief_lines.insert(
                 2,
                 f"[DESIGN] mode={design_mode} | skills={skills_tag} | stack={design_stack_hint}",

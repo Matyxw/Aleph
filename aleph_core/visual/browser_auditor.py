@@ -168,6 +168,70 @@ _WEBGL_FONTS_JS = """async () => {
   return { loadedFonts, canvases };
 }"""
 
+_MOTION_LAYOUT_JS = """async () => {
+  const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+  const fixedHeaders = [];
+  for (const el of Array.from(document.querySelectorAll('header, nav'))) {
+    const st = window.getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') continue;
+    if (st.position === 'fixed' || st.position === 'sticky') {
+      fixedHeaders.push({ el, rect: el.getBoundingClientRect() });
+    }
+  }
+  const clippedSelectors = [];
+  const overlapSelectors = [];
+  for (const el of Array.from(document.querySelectorAll('h1, h2, h3, p'))) {
+    const st = window.getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') continue;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) continue;
+    const tag = el.tagName.toLowerCase() + (el.id ? '#' + el.id : '');
+    if (r.right > vw + 2 || r.left < -2) {
+      if (clippedSelectors.length < 10) clippedSelectors.push(tag);
+    }
+    for (const fh of fixedHeaders) {
+      if (!fh.el.contains(el) && r.top >= 0 && r.top < fh.rect.bottom - 2 && r.bottom > fh.rect.top + 2) {
+        if (overlapSelectors.length < 10) overlapSelectors.push(tag);
+      }
+    }
+  }
+  const stamps = [];
+  const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  const startY = window.scrollY;
+  await new Promise((resolve) => {
+    let i = 0;
+    const step = (ts) => {
+      stamps.push(ts);
+      if (maxScroll > 20 && i < 12) window.scrollTo(0, Math.round((maxScroll * 0.25 * i) / 12));
+      i += 1;
+      if (i <= 12) requestAnimationFrame(step);
+      else resolve();
+    };
+    requestAnimationFrame(step);
+  });
+  window.scrollTo(0, startY);
+  const deltas = [];
+  for (let i = 1; i < stamps.length; i++) deltas.push(Math.max(1.0, stamps[i] - stamps[i - 1]));
+  const avgDelta = deltas.length ? deltas.reduce((a, b) => a + b, 0) / deltas.length : 16.67;
+  const maxDelta = deltas.length ? Math.max(...deltas) : 16.67;
+  const longFrames = deltas.filter((d) => d > 50).length;
+  return {
+    motion: {
+      cls: Math.round(Number(window.__alephCls || 0) * 10000) / 10000,
+      avg_fps: Math.round((1000.0 / avgDelta) * 10) / 10,
+      min_frame_fps: Math.round((1000.0 / maxDelta) * 10) / 10,
+      frames_sampled: deltas.length,
+      long_frames_over_50ms: longFrames,
+    },
+    layout: {
+      clipped_text_count: clippedSelectors.length,
+      clipped_selectors: clippedSelectors,
+      fixed_header_overlap_count: overlapSelectors.length,
+      overlap_selectors: overlapSelectors,
+    },
+  };
+}"""
+
 
 @dataclass
 class VisualAuditReport:
@@ -189,6 +253,8 @@ class VisualAuditReport:
     screenshots: Dict[str, str] = field(default_factory=dict)
     webgl_canvas_audit: Dict[str, Any] = field(default_factory=dict)
     loaded_web_fonts: List[str] = field(default_factory=list)
+    motion_telemetry: Dict[str, Any] = field(default_factory=dict)
+    layout_telemetry: Dict[str, Any] = field(default_factory=dict)
     violations: List[str] = field(default_factory=list)
     summary: str = ""
 
@@ -202,7 +268,7 @@ class _QuietHTTPHandler(http.server.SimpleHTTPRequestHandler):
 
 
 class VisualBrowserAuditor:
-    """Orquesta auditoría DOM/CSS/WebGL en Chromium real para 3 viewports y storyboard."""
+    """Orquesta auditoría DOM/CSS/WebGL/FPS/CLS en Chromium real para 3 viewports y storyboard."""
 
     def __init__(self, repo_root: Optional[str] = None):
         self.repo_root = os.path.abspath(repo_root) if repo_root else os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -259,6 +325,8 @@ class VisualBrowserAuditor:
         contrast_violations: List[Dict[str, Any]] = []
         loaded_web_fonts: List[str] = []
         webgl_audit: Dict[str, Any] = {"canvas_count": 0, "canvases": [], "context_lost_count": 0, "monochrome_count": 0, "all_healthy": True}
+        motion_telemetry: Dict[str, Any] = {"cls": 0.0, "avg_fps": 0.0, "min_frame_fps": 0.0, "frames_sampled": 0, "long_frames_over_50ms": 0}
+        layout_telemetry: Dict[str, Any] = {"clipped_text_count": 0, "clipped_selectors": [], "fixed_header_overlap_count": 0, "overlap_selectors": []}
         max_overflow, animations_total, has_reduced_rule = 0.0, 0, False
         load_timing: Dict[str, float] = {"domcontentloaded_ms": 0.0, "load_ms": 0.0}
 
@@ -268,7 +336,7 @@ class VisualBrowserAuditor:
                 engine = f"Chromium {browser.version or 'headless'}"
                 page = browser.new_page(viewport={"width": 1440, "height": 900})
                 page.set_default_timeout(timeout_ms)
-                page.add_init_script("window.__alephWebglLost = false; window.addEventListener('webglcontextlost', () => { window.__alephWebglLost = true; }, true);")
+                page.add_init_script("window.__alephWebglLost = false; window.__alephCls = 0; window.addEventListener('webglcontextlost', () => { window.__alephWebglLost = true; }, true); try { new PerformanceObserver((l) => { for (const e of l.getEntries()) { if (!e.hadRecentInput) window.__alephCls += e.value; } }).observe({ type: 'layout-shift', buffered: true }); } catch (_e) {}")
                 page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
                 page.on("pageerror", lambda err: page_errors.append(str(err)))
                 t0 = time.perf_counter()
@@ -305,16 +373,23 @@ class VisualBrowserAuditor:
                     shot_path = os.path.abspath(os.path.join(shot_dir, f"{vp_name}.png"))
                     page.screenshot(path=shot_path, full_page=False)
                     screenshots[vp_name] = shot_path
-                    if capture_scroll_storyboard and vp_name == "desktop_1440":
-                        max_scroll = int(page.evaluate("Math.max(0, document.documentElement.scrollHeight - window.innerHeight)") or 0)
-                        if max_scroll > 80:
-                            for pct, key in ((0.35, "scroll_35_1440"), (0.70, "scroll_70_1440")):
-                                page.evaluate("y => window.scrollTo(0, y)", int(max_scroll * pct))
-                                page.wait_for_timeout(350)
-                                s_path = os.path.abspath(os.path.join(shot_dir, f"{key}.png"))
-                                page.screenshot(path=s_path, full_page=False)
-                                screenshots[key] = s_path
-                            page.evaluate("window.scrollTo(0, 0)")
+                    if vp_name == "desktop_1440":
+                        ml = page.evaluate(_MOTION_LAYOUT_JS)
+                        if isinstance(ml, dict):
+                            if isinstance(ml.get("motion"), dict):
+                                motion_telemetry = dict(ml.get("motion") or {})
+                            if isinstance(ml.get("layout"), dict):
+                                layout_telemetry = dict(ml.get("layout") or {})
+                        if capture_scroll_storyboard:
+                            max_scroll = int(page.evaluate("Math.max(0, document.documentElement.scrollHeight - window.innerHeight)") or 0)
+                            if max_scroll > 80:
+                                for pct, key in ((0.35, "scroll_35_1440"), (0.70, "scroll_70_1440")):
+                                    page.evaluate("y => window.scrollTo(0, y)", int(max_scroll * pct))
+                                    page.wait_for_timeout(350)
+                                    s_path = os.path.abspath(os.path.join(shot_dir, f"{key}.png"))
+                                    page.screenshot(path=s_path, full_page=False)
+                                    screenshots[key] = s_path
+                                page.evaluate("window.scrollTo(0, 0)")
 
                 reduced_ok = True
                 if animations_total > 0 and not has_reduced_rule:
@@ -339,6 +414,8 @@ class VisualBrowserAuditor:
             violations.append("missing_prefers_reduced_motion")
         if not webgl_audit.get("all_healthy", True):
             violations.append(f"webgl_unhealthy(lost={webgl_audit.get('context_lost_count')},mono={webgl_audit.get('monochrome_count')})")
+        if float(motion_telemetry.get("cls", 0.0)) > 0.25:
+            violations.append(f"cls_exceeded={motion_telemetry.get('cls')}")
 
         passed = len(violations) == 0
         return VisualAuditReport(
@@ -347,7 +424,8 @@ class VisualBrowserAuditor:
             overflow_selectors=overflow_selectors, broken_images=broken_images, contrast_violations=contrast_violations,
             reduced_motion_ok=reduced_ok, animations_detected=animations_total, load_timing_ms=load_timing,
             screenshots=screenshots, webgl_canvas_audit=webgl_audit, loaded_web_fonts=loaded_web_fonts,
-            violations=violations, summary=f"[{'PASS' if passed else 'FAIL'}] {engine} | overflow={max_overflow:.0f}px | violations={len(violations)}",
+            motion_telemetry=motion_telemetry, layout_telemetry=layout_telemetry,
+            violations=violations, summary=f"[{'PASS' if passed else 'FAIL'}] {engine} | overflow={max_overflow:.0f}px | cls={motion_telemetry.get('cls', 0.0)} | violations={len(violations)}",
         )
 
 

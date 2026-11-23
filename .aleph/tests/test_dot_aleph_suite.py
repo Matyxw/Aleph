@@ -851,5 +851,65 @@ class TestRonda10AwwwardsCreativeEngine(unittest.TestCase):
         self.assertTrue(os.path.isfile(rep["screenshots"]["scroll_70_1440"]))
 
 
+class TestRonda11StudioCreativeUpgrade(unittest.TestCase):
+    def test_ronda11_four_surgical_skills_installed_without_duplicates(self):
+        import os
+        cfg = os.path.join(os.path.expanduser("~"), ".gemini", "config", "skills")
+        agents_dup = os.path.join(os.path.expanduser("~"), ".agents", "skills")
+        for name in ("emil-design-eng", "review-animations", "threejs-shaders", "threejs-asset-pipeline"):
+            self.assertTrue(os.path.isfile(os.path.join(cfg, name, "SKILL.md")), f"Missing Ronda 11 skill {name}")
+            self.assertFalse(os.path.exists(os.path.join(agents_dup, name)), f"Duplicate in {agents_dup}")
+        self.assertTrue(os.path.isfile(os.path.join(cfg, "review-animations", "STANDARDS.md")))
+
+    def test_ronda11_bpe_budgets_and_preflight_routing(self):
+        from aleph_core.router.dispatcher import estimate_bpe_tokens
+        from aleph_core.router.executive_preflight import ExecutivePreflight
+
+        dk = (_ALEPH / "DESIGN_KERNEL.md").read_text(encoding="utf-8")
+        self.assertLessEqual(estimate_bpe_tokens(dk), 260)
+        self.assertIn("emil-design-eng", dk)
+        self.assertIn("threejs-shaders", dk)
+
+        for mf in ("elite_product.md", "avant_garde_soty.md", "hyper_speed.md"):
+            self.assertLessEqual(estimate_bpe_tokens((_ALEPH / "design_modes" / mf).read_text(encoding="utf-8")), 260)
+
+        rep_soty = ExecutivePreflight.analyze("Lanzamiento WebGPU Three.js Awwwards SOTY", repo_root=str(_ROOT))
+        self.assertEqual(rep_soty["design_mode"], "AVANT_GARDE_SOTY")
+        self.assertLessEqual(rep_soty["executive_brief_bpe_tokens"], 320)
+        self.assertIn("threejs-shaders", rep_soty["executive_brief"])
+
+        rep_saas = ExecutivePreflight.analyze("Diseñar dashboard SaaS de facturación en React", repo_root=str(_ROOT))
+        self.assertEqual(rep_saas["design_mode"], "ELITE_PRODUCT")
+        self.assertLessEqual(rep_saas["executive_brief_bpe_tokens"], 320)
+        self.assertIn("emil-design-eng", rep_saas["executive_brief"])
+
+        rep_be = ExecutivePreflight.analyze("Crear índice GIN PostgreSQL 18", repo_root=str(_ROOT))
+        self.assertFalse(rep_be["is_design_turn"])
+        self.assertNotIn("emil-design-eng", rep_be["executive_brief"])
+        self.assertNotIn("threejs-shaders", rep_be["executive_brief"])
+
+    def test_ronda11_chromium_motion_telemetry_and_hdri_pipeline(self):
+        import tempfile
+        from aleph_core.visual.browser_auditor import VisualBrowserAuditor
+        from aleph_core.visual.studio_assets import fetch_polyhaven_studio_hdri
+
+        html = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8" />
+<style>body{margin:0;background:#08090B;color:#F4F5F7;min-height:2400px;}header{position:fixed;top:0;left:0;right:0;height:48px;}main{padding-top:84px;}</style>
+</head><body><header>NAV</header><main><h1>KRONOS</h1><p>Studio telemetry probe</p></main></body></html>"""
+        rep = VisualBrowserAuditor(repo_root=str(_ROOT)).audit(html_content=html).to_dict()
+        self.assertTrue(rep["passed"], f"Visual audit failed: {rep}")
+        mt = rep.get("motion_telemetry") or {}
+        self.assertIn("cls", mt)
+        self.assertIn("avg_fps", mt)
+        self.assertGreater(mt.get("frames_sampled", 0), 0)
+        lt = rep.get("layout_telemetry") or {}
+        self.assertEqual(lt.get("fixed_header_overlap_count", -1), 0)
+
+        with tempfile.TemporaryDirectory() as tmpd:
+            hdr = fetch_polyhaven_studio_hdri("studio_small_09", "1k", dest_dir=tmpd)
+            self.assertGreater(hdr.get("bytes", 0), 50000)
+            self.assertTrue(Path(hdr["dest_path"]).is_file())
+
+
 if __name__ == "__main__":
     unittest.main()

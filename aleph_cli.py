@@ -1010,6 +1010,12 @@ def cmd_visual_audit(target: str, capture_scroll_storyboard: bool = True) -> int
     return 0 if report.get("passed") else 1
 
 
+def cmd_fetch_hdri() -> int:
+    """Descarga o reutiliza desde caché un HDRI CC0 real de Poly Haven."""
+    from aleph_core.visual.studio_assets import cli_fetch_hdri
+    return cli_fetch_hdri(sys.argv[2:])
+
+
 def __getattr__(name: str):
     if name.startswith("cmd_"):
         from aleph_core.research_archive import cli_archive as _ca
@@ -1114,6 +1120,8 @@ if __name__ == "__main__":
         sys.exit(cmd_evolve_gepa())
     elif cmd == "visual-audit" and len(sys.argv) > 2:
         sys.exit(cmd_visual_audit(sys.argv[2], capture_scroll_storyboard=("--no-storyboard" not in sys.argv[2:])))
+    elif cmd == "fetch-hdri":
+        sys.exit(cmd_fetch_hdri())
     else:
         from aleph_core.research_archive.cli_archive import dispatch_archived_cli_command
         rc = dispatch_archived_cli_command(cmd, sys.argv)
