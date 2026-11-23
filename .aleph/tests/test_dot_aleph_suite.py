@@ -781,5 +781,75 @@ class TestRonda9DesignSkillsAndAestheticWiring(unittest.TestCase):
             self.assertFalse((dup_dir / name).exists(), f"Unexpected duplicate copy in {dup_dir / name}")
 
 
+class TestRonda10AwwwardsCreativeEngine(unittest.TestCase):
+    def test_ronda10_creative_skills_and_node_installed(self):
+        import os
+        cfg = os.path.join(os.path.expanduser("~"), ".gemini", "config", "skills")
+        expected = (
+            "awwwards-animations",
+            "design-taste-frontend",
+            "impeccable",
+            "gsap-core",
+            "gsap-scrolltrigger",
+            "gsap-plugins",
+            "gsap-react",
+            "r3f-fundamentals",
+            "r3f-materials",
+            "r3f-lighting",
+            "r3f-shaders",
+            "r3f-postprocessing",
+        )
+        for name in expected:
+            self.assertTrue(os.path.isfile(os.path.join(cfg, name, "SKILL.md")), f"Missing skill {name}")
+        agents_dup = os.path.join(os.path.expanduser("~"), ".agents", "skills")
+        for name in expected:
+            self.assertFalse(os.path.exists(os.path.join(agents_dup, name)), f"Duplicate skill in {agents_dup}")
+        node_exe = os.path.join(os.path.expanduser("~"), ".aleph", "tools", "node", "node.exe")
+        self.assertTrue(os.path.isfile(node_exe), "Portable Node v22 LTS missing")
+
+    def test_ronda10_kernel_preflight_4layer_within_bpe_budget(self):
+        from aleph_core.router.dispatcher import estimate_bpe_tokens
+        from aleph_core.router.executive_preflight import ExecutivePreflight
+
+        dk = (_ALEPH / "DESIGN_KERNEL.md").read_text(encoding="utf-8")
+        self.assertLessEqual(estimate_bpe_tokens(dk), 260)
+        self.assertIn("gsap-skills", dk)
+        self.assertIn("r3f-skills", dk)
+
+        soty = (_ALEPH / "design_modes" / "avant_garde_soty.md").read_text(encoding="utf-8")
+        self.assertLessEqual(estimate_bpe_tokens(soty), 260)
+        self.assertIn("awwwards-animations", soty)
+        self.assertIn("r3f-skills", soty)
+
+        rep = ExecutivePreflight.analyze("Crear experiencia Awwwards SOTY para KRONOS-01 en Three.js y GSAP", repo_root=str(_ROOT))
+        self.assertTrue(rep["is_design_turn"])
+        self.assertEqual(rep["design_mode"], "AVANT_GARDE_SOTY")
+        self.assertLessEqual(rep["executive_brief_bpe_tokens"], 320)
+        self.assertIn("awwwards-animations+r3f-skills", rep["executive_brief"])
+
+        be = ExecutivePreflight.analyze("Crear política RLS y índice PostgreSQL 18", repo_root=str(_ROOT))
+        self.assertFalse(be["is_design_turn"])
+        self.assertNotIn("r3f-skills", be["executive_brief"])
+        self.assertNotIn("awwwards-animations", be["executive_brief"])
+
+    def test_ronda10_auditor_webgl_fonts_and_storyboard_captures(self):
+        import os
+        from aleph_core.visual.browser_auditor import VisualBrowserAuditor
+
+        html = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8" />
+<style>body{margin:0;background:#0a0b0e;color:#f5f5f7;min-height:2600px;}canvas{display:block;width:320px;height:180px;}</style>
+</head><body><h1>KRONOS</h1><canvas id="c" width="320" height="180"></canvas>
+<script>const c=document.getElementById('c');const x=c.getContext('2d');const g=x.createLinearGradient(0,0,320,180);g.addColorStop(0,'#111');g.addColorStop(1,'#f5f5f7');x.fillStyle=g;x.fillRect(0,0,320,180);</script>
+</body></html>"""
+        rep = VisualBrowserAuditor(repo_root=str(_ROOT)).audit(html_content=html, capture_scroll_storyboard=True).to_dict()
+        self.assertTrue(rep["passed"], f"Audit failed: {rep}")
+        self.assertEqual(rep["webgl_canvas_audit"]["canvas_count"], 1)
+        self.assertTrue(rep["webgl_canvas_audit"]["all_healthy"])
+        self.assertIn("scroll_35_1440", rep["screenshots"])
+        self.assertIn("scroll_70_1440", rep["screenshots"])
+        self.assertTrue(os.path.isfile(rep["screenshots"]["scroll_35_1440"]))
+        self.assertTrue(os.path.isfile(rep["screenshots"]["scroll_70_1440"]))
+
+
 if __name__ == "__main__":
     unittest.main()

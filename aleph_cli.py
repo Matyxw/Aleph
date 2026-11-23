@@ -1001,11 +1001,11 @@ def cmd_evolve_gepa() -> int:
     return cli_evolve_gepa(sys.argv[2:])
 
 
-def cmd_visual_audit(target: str) -> int:
+def cmd_visual_audit(target: str, capture_scroll_storyboard: bool = True) -> int:
     """Audita visualmente URL o HTML local en Chromium headless multiviewport con PNGs reales."""
     from aleph_core.visual.browser_auditor import audit_visual_target
 
-    report = audit_visual_target(path_or_url=target)
+    report = audit_visual_target(path_or_url=target, capture_scroll_storyboard=capture_scroll_storyboard)
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0 if report.get("passed") else 1
 
@@ -1113,7 +1113,7 @@ if __name__ == "__main__":
     elif cmd == "evolve-gepa":
         sys.exit(cmd_evolve_gepa())
     elif cmd == "visual-audit" and len(sys.argv) > 2:
-        sys.exit(cmd_visual_audit(sys.argv[2]))
+        sys.exit(cmd_visual_audit(sys.argv[2], capture_scroll_storyboard=("--no-storyboard" not in sys.argv[2:])))
     else:
         from aleph_core.research_archive.cli_archive import dispatch_archived_cli_command
         rc = dispatch_archived_cli_command(cmd, sys.argv)

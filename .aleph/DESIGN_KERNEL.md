@@ -1,5 +1,4 @@
 # ALEPH DESIGN ENGINE SOTA+
-1. Skills SOTA: en toda UI/Landing/App activá `design-taste-frontend` (44 type systems, 58 heroes, 420 fotos) + `impeccable` (`critique`, `bolder`, `distill`, `typeset`, `polish`).
-2. Prohibido modo offline con fuentes sistema o dibujar hardware en 60 líneas SVG/GLSL: usá Google Fonts, librerías y fotografía/assets reales.
-3. Workflow Hero-First: verificá Hero PNG en Chromium antes de expandir; `_build_rich_6section_template` nunca se fuerza.
-4. Crítica fría (`/impeccable critique` + `bolder` + `distill`) y red técnica `aleph visual-audit` (`0` overflow/errores/slop).
+1. Creative Stack (4 Capas): `design-taste-frontend` + `impeccable` (`critique`, `bolder`, `distill`, `polish`) | Motion: `gsap-skills` + `awwwards-animations` (Lenis, ScrollTrigger) | 3D PBR: `r3f-skills` (R3F, Drei, shaders, Bloom).
+2. Flagship SOTY: Vite + React 19 + Tailwind v4 + Google Fonts (sin `_build_rich_6section_template`, sin fuentes sistema ni 60L SVG/GLSL).
+3. Verificación: Hero-First + Storyboard (`scroll_35_1440`, `scroll_70_1440`) + `aleph visual-audit` (`0` overflow/errores, WebGL sano).

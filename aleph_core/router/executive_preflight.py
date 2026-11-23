@@ -318,9 +318,14 @@ class ExecutivePreflight:
             f"[BITACORA-TOP3] {rule_tags}",
         ]
         if is_design_turn and design_mode:
+            skills_tag = (
+                "design-taste-frontend+impeccable+awwwards-animations+r3f-skills"
+                if design_mode == "AVANT_GARDE_SOTY"
+                else "design-taste-frontend+impeccable"
+            )
             brief_lines.insert(
                 2,
-                f"[DESIGN] mode={design_mode} | skills=design-taste-frontend+impeccable | stack={design_stack_hint}",
+                f"[DESIGN] mode={design_mode} | skills={skills_tag} | stack={design_stack_hint}",
             )
         executive_brief = "\n".join(brief_lines)
         while estimate_bpe_tokens(executive_brief) > cls.MAX_BRIEF_BPE_TOKENS and "\n" in executive_brief:

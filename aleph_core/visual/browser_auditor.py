@@ -108,25 +108,15 @@ _DOM_EVAL_JS = """(vpName) => {
   for (const sheet of Array.from(document.styleSheets || [])) {
     try {
       for (const rule of Array.from(sheet.cssRules || [])) {
-        if (rule.conditionText && rule.conditionText.includes('prefers-reduced-motion')) {
-          hasReducedMediaRule = true;
-          break;
-        }
+        if (rule.conditionText && rule.conditionText.includes('prefers-reduced-motion')) { hasReducedMediaRule = true; break; }
       }
     } catch (_err) { /* cross-origin stylesheet */ }
     if (hasReducedMediaRule) break;
   }
   const nav = performance.getEntriesByType('navigation')[0];
   return {
-    viewport: vpName,
-    width: vw,
-    scrollWidth: docSw,
-    horizontalOverflowPx: overflowPx,
-    overflowSelectors,
-    brokenImages,
-    contrastViolations,
-    animationsDetected,
-    hasReducedMediaRule,
+    viewport: vpName, width: vw, scrollWidth: docSw, horizontalOverflowPx: overflowPx,
+    overflowSelectors, brokenImages, contrastViolations, animationsDetected, hasReducedMediaRule,
     domContentLoadedMs: nav ? Math.max(0, Math.round(nav.domContentLoadedEventEnd - nav.startTime)) : 0,
     loadEventMs: nav ? Math.max(0, Math.round(nav.loadEventEnd - nav.startTime)) : 0,
   };
@@ -135,18 +125,47 @@ _DOM_EVAL_JS = """(vpName) => {
 _REDUCED_CHECK_JS = """() => {
   let active = 0;
   if (typeof document.getAnimations === 'function') {
-    for (const a of document.getAnimations()) {
-      if (a.playState === 'running') active += 1;
-    }
+    for (const a of document.getAnimations()) { if (a.playState === 'running') active += 1; }
   }
   for (const el of document.querySelectorAll('*')) {
     const st = window.getComputedStyle(el);
-    if (st.animationName && st.animationName !== 'none' && parseFloat(st.animationDuration || '0') > 0 && st.animationPlayState !== 'paused') {
-      active += 1;
-      break;
-    }
+    if (st.animationName && st.animationName !== 'none' && parseFloat(st.animationDuration || '0') > 0 && st.animationPlayState !== 'paused') { active += 1; break; }
   }
   return active;
+}"""
+
+_WEBGL_FONTS_JS = """async () => {
+  try { if (document.fonts && document.fonts.ready) await document.fonts.ready; } catch (_e) { /* fonts */ }
+  const loadedFonts = [];
+  if (document.fonts) {
+    for (const f of Array.from(document.fonts)) {
+      if (f.status === 'loaded' && f.family && !loadedFonts.includes(f.family)) loadedFonts.push(f.family);
+    }
+  }
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const canvases = [];
+  for (const c of Array.from(document.querySelectorAll('canvas'))) {
+    const rect = c.getBoundingClientRect();
+    let variance = 0;
+    try {
+      const probe = document.createElement('canvas');
+      probe.width = 16; probe.height = 16;
+      const pctx = probe.getContext('2d');
+      if (pctx && c.width > 0 && c.height > 0) {
+        pctx.drawImage(c, 0, 0, 16, 16);
+        const px = pctx.getImageData(0, 0, 16, 16).data;
+        let minL = 255, maxL = 0;
+        for (let i = 0; i < px.length; i += 4) {
+          const lum = px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114;
+          if (lum < minL) minL = lum;
+          if (lum > maxL) maxL = lum;
+        }
+        variance = Math.round((maxL - minL) * 100) / 100;
+      }
+    } catch (_e) { variance = -1; }
+    canvases.push({ width: c.width || Math.round(rect.width), height: c.height || Math.round(rect.height), pixelVariance: variance, monochrome: variance >= 0 && variance < 1.5, contextLost: Boolean(window.__alephWebglLost) });
+  }
+  return { loadedFonts, canvases };
 }"""
 
 
@@ -168,6 +187,8 @@ class VisualAuditReport:
     animations_detected: int = 0
     load_timing_ms: Dict[str, float] = field(default_factory=dict)
     screenshots: Dict[str, str] = field(default_factory=dict)
+    webgl_canvas_audit: Dict[str, Any] = field(default_factory=dict)
+    loaded_web_fonts: List[str] = field(default_factory=list)
     violations: List[str] = field(default_factory=list)
     summary: str = ""
 
@@ -181,19 +202,15 @@ class _QuietHTTPHandler(http.server.SimpleHTTPRequestHandler):
 
 
 class VisualBrowserAuditor:
-    """Orquesta auditoría DOM/CSS/visual en Chromium real para 3 viewports con screenshots."""
+    """Orquesta auditoría DOM/CSS/WebGL en Chromium real para 3 viewports y storyboard."""
 
     def __init__(self, repo_root: Optional[str] = None):
-        if repo_root:
-            self.repo_root = os.path.abspath(repo_root)
-        else:
-            self.repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.repo_root = os.path.abspath(repo_root) if repo_root else os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     def _prepare_target(self, path_or_url: str, html_content: Optional[str]) -> Tuple[str, Optional[http.server.ThreadingHTTPServer], Optional[str]]:
         if html_content is not None and str(html_content).strip():
             tmp_dir = tempfile.mkdtemp(prefix="aleph_visual_")
-            idx_path = os.path.join(tmp_dir, "index.html")
-            Path(idx_path).write_text(html_content, encoding="utf-8")
+            Path(os.path.join(tmp_dir, "index.html")).write_text(html_content, encoding="utf-8")
             url, srv = self._start_static_server(tmp_dir, "index.html")
             return url, srv, tmp_dir
         raw = str(path_or_url or "").strip()
@@ -201,9 +218,7 @@ class VisualBrowserAuditor:
             return raw, None, None
         abs_p = os.path.abspath(raw)
         if os.path.isfile(abs_p):
-            serve_dir = os.path.dirname(abs_p)
-            rel_name = os.path.basename(abs_p)
-            url, srv = self._start_static_server(serve_dir, rel_name)
+            url, srv = self._start_static_server(os.path.dirname(abs_p), os.path.basename(abs_p))
             return url, srv, None
         if os.path.isdir(abs_p):
             url, srv = self._start_static_server(abs_p, "index.html")
@@ -214,26 +229,17 @@ class VisualBrowserAuditor:
     def _start_static_server(directory: str, entry_file: str) -> Tuple[str, http.server.ThreadingHTTPServer]:
         handler = functools.partial(_QuietHTTPHandler, directory=directory)
         httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-        port = int(httpd.server_address[1])
-        t = threading.Thread(target=httpd.serve_forever, daemon=True)
-        t.start()
-        return f"http://127.0.0.1:{port}/{entry_file}", httpd
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        return f"http://127.0.0.1:{int(httpd.server_address[1])}/{entry_file}", httpd
 
-    def audit(
-        self,
-        path_or_url: str = "",
-        html_content: Optional[str] = None,
-        output_root: Optional[str] = None,
-        timeout_ms: int = 15000,
-    ) -> VisualAuditReport:
+    def audit(self, path_or_url: str = "", html_content: Optional[str] = None, output_root: Optional[str] = None, timeout_ms: int = 15000, capture_scroll_storyboard: bool = True) -> VisualAuditReport:
         stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d_%H%M%S")
         audit_id = f"va_{stamp}_{uuid.uuid4().hex[:6]}"
-        base_out = output_root or os.path.join(self.repo_root, ".aleph", "runtime", "visual_audits")
-        shot_dir = os.path.abspath(os.path.join(base_out, audit_id))
+        shot_dir = os.path.abspath(os.path.join(output_root or os.path.join(self.repo_root, ".aleph", "runtime", "visual_audits"), audit_id))
         os.makedirs(shot_dir, exist_ok=True)
         url, httpd, tmp_dir = self._prepare_target(path_or_url, html_content)
         try:
-            return self._audit_url(audit_id, path_or_url or "inline_html", url, shot_dir, timeout_ms)
+            return self._audit_url(audit_id, path_or_url or "inline_html", url, shot_dir, timeout_ms, capture_scroll_storyboard)
         finally:
             if httpd is not None:
                 httpd.shutdown()
@@ -241,9 +247,7 @@ class VisualBrowserAuditor:
             if tmp_dir and os.path.isdir(tmp_dir):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    def _audit_url(
-        self, audit_id: str, label: str, url: str, shot_dir: str, timeout_ms: int
-    ) -> VisualAuditReport:
+    def _audit_url(self, audit_id: str, label: str, url: str, shot_dir: str, timeout_ms: int, capture_scroll_storyboard: bool = True) -> VisualAuditReport:
         from playwright.sync_api import sync_playwright
 
         console_errors: List[str] = []
@@ -253,30 +257,38 @@ class VisualBrowserAuditor:
         overflow_selectors: List[str] = []
         broken_images: List[str] = []
         contrast_violations: List[Dict[str, Any]] = []
-        max_overflow = 0.0
-        animations_total = 0
-        has_reduced_rule = False
+        loaded_web_fonts: List[str] = []
+        webgl_audit: Dict[str, Any] = {"canvas_count": 0, "canvases": [], "context_lost_count": 0, "monochrome_count": 0, "all_healthy": True}
+        max_overflow, animations_total, has_reduced_rule = 0.0, 0, False
         load_timing: Dict[str, float] = {"domcontentloaded_ms": 0.0, "load_ms": 0.0}
 
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True, args=["--no-sandbox", "--disable-gpu"])
+            browser = pw.chromium.launch(headless=True, args=["--no-sandbox", "--enable-webgl", "--ignore-gpu-blocklist", "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"])
             try:
                 engine = f"Chromium {browser.version or 'headless'}"
                 page = browser.new_page(viewport={"width": 1440, "height": 900})
                 page.set_default_timeout(timeout_ms)
+                page.add_init_script("window.__alephWebglLost = false; window.addEventListener('webglcontextlost', () => { window.__alephWebglLost = true; }, true);")
                 page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
                 page.on("pageerror", lambda err: page_errors.append(str(err)))
                 t0 = time.perf_counter()
                 page.goto(url, wait_until="load", timeout=timeout_ms)
                 wall_ms = round((time.perf_counter() - t0) * 1000.0, 2)
 
+                wf = page.evaluate(_WEBGL_FONTS_JS)
+                if isinstance(wf, dict):
+                    loaded_web_fonts = list(wf.get("loadedFonts") or [])
+                    c_list = list(wf.get("canvases") or [])
+                    lost_n = sum(1 for c in c_list if c.get("contextLost") or c.get("width", 0) <= 0 or c.get("height", 0) <= 0)
+                    mono_n = sum(1 for c in c_list if c.get("monochrome"))
+                    webgl_audit = {"canvas_count": len(c_list), "canvases": c_list, "context_lost_count": lost_n, "monochrome_count": mono_n, "all_healthy": (lost_n == 0 and mono_n == 0)}
+
                 for vp_name, vw, vh in VIEWPORTS:
                     page.set_viewport_size({"width": vw, "height": vh})
                     page.evaluate("void(document.documentElement.offsetHeight)")
                     data = page.evaluate(_DOM_EVAL_JS, vp_name)
                     if isinstance(data, dict):
-                        ov = float(data.get("horizontalOverflowPx", 0.0))
-                        max_overflow = max(max_overflow, ov)
+                        max_overflow = max(max_overflow, float(data.get("horizontalOverflowPx", 0.0)))
                         for s in data.get("overflowSelectors") or []:
                             if s not in overflow_selectors:
                                 overflow_selectors.append(s)
@@ -286,19 +298,28 @@ class VisualBrowserAuditor:
                         contrast_violations.extend(data.get("contrastViolations") or [])
                         animations_total = max(animations_total, int(data.get("animationsDetected", 0)))
                         has_reduced_rule = has_reduced_rule or bool(data.get("hasReducedMediaRule"))
-                        if load_timing["load_ms"] == 0.0:
+                        if load_timing.get("load_ms", 0.0) == 0.0:
                             load_timing["domcontentloaded_ms"] = float(data.get("domContentLoadedMs") or wall_ms)
                             load_timing["load_ms"] = float(data.get("loadEventMs") or wall_ms)
                         vp_metrics[vp_name] = data
                     shot_path = os.path.abspath(os.path.join(shot_dir, f"{vp_name}.png"))
                     page.screenshot(path=shot_path, full_page=False)
                     screenshots[vp_name] = shot_path
+                    if capture_scroll_storyboard and vp_name == "desktop_1440":
+                        max_scroll = int(page.evaluate("Math.max(0, document.documentElement.scrollHeight - window.innerHeight)") or 0)
+                        if max_scroll > 80:
+                            for pct, key in ((0.35, "scroll_35_1440"), (0.70, "scroll_70_1440")):
+                                page.evaluate("y => window.scrollTo(0, y)", int(max_scroll * pct))
+                                page.wait_for_timeout(350)
+                                s_path = os.path.abspath(os.path.join(shot_dir, f"{key}.png"))
+                                page.screenshot(path=s_path, full_page=False)
+                                screenshots[key] = s_path
+                            page.evaluate("window.scrollTo(0, 0)")
 
                 reduced_ok = True
                 if animations_total > 0 and not has_reduced_rule:
                     page.emulate_media(reduced_motion="reduce")
-                    still_active = int(page.evaluate(_REDUCED_CHECK_JS) or 0)
-                    reduced_ok = still_active == 0
+                    reduced_ok = int(page.evaluate(_REDUCED_CHECK_JS) or 0) == 0
                     page.emulate_media(reduced_motion="no-preference")
             finally:
                 browser.close()
@@ -316,30 +337,20 @@ class VisualBrowserAuditor:
             violations.append(f"contrast_violations={len(contrast_violations)}")
         if not reduced_ok:
             violations.append("missing_prefers_reduced_motion")
+        if not webgl_audit.get("all_healthy", True):
+            violations.append(f"webgl_unhealthy(lost={webgl_audit.get('context_lost_count')},mono={webgl_audit.get('monochrome_count')})")
 
         passed = len(violations) == 0
-        summary = f"[{'PASS' if passed else 'FAIL'}] {engine} | overflow={max_overflow:.0f}px | violations={len(violations)}"
         return VisualAuditReport(
-            audit_id=audit_id,
-            target=label,
-            passed=passed,
-            engine=engine,
-            viewports=vp_metrics,
-            console_errors=console_errors,
-            page_errors=page_errors,
-            horizontal_overflow_px=max_overflow,
-            overflow_selectors=overflow_selectors,
-            broken_images=broken_images,
-            contrast_violations=contrast_violations,
-            reduced_motion_ok=reduced_ok,
-            animations_detected=animations_total,
-            load_timing_ms=load_timing,
-            screenshots=screenshots,
-            violations=violations,
-            summary=summary,
+            audit_id=audit_id, target=label, passed=passed, engine=engine, viewports=vp_metrics,
+            console_errors=console_errors, page_errors=page_errors, horizontal_overflow_px=max_overflow,
+            overflow_selectors=overflow_selectors, broken_images=broken_images, contrast_violations=contrast_violations,
+            reduced_motion_ok=reduced_ok, animations_detected=animations_total, load_timing_ms=load_timing,
+            screenshots=screenshots, webgl_canvas_audit=webgl_audit, loaded_web_fonts=loaded_web_fonts,
+            violations=violations, summary=f"[{'PASS' if passed else 'FAIL'}] {engine} | overflow={max_overflow:.0f}px | violations={len(violations)}",
         )
 
 
-def audit_visual_target(path_or_url: str = "", html_content: Optional[str] = None, repo_root: Optional[str] = None) -> Dict[str, Any]:
+def audit_visual_target(path_or_url: str = "", html_content: Optional[str] = None, repo_root: Optional[str] = None, capture_scroll_storyboard: bool = True) -> Dict[str, Any]:
     """Punto de entrada compacto para CLI y MCP dispatch."""
-    return VisualBrowserAuditor(repo_root=repo_root).audit(path_or_url=path_or_url, html_content=html_content).to_dict()
+    return VisualBrowserAuditor(repo_root=repo_root).audit(path_or_url=path_or_url, html_content=html_content, capture_scroll_storyboard=capture_scroll_storyboard).to_dict()
