@@ -1040,6 +1040,21 @@ def cmd_visual_evolve() -> int:
     return cli_visual_evolve(sys.argv[2:])
 
 
+def cmd_mcp_prod_serve() -> int:
+    """Arranca el servidor ASGI MCP Remoto OAuth 2.1 (Starlette + Uvicorn)."""
+    from aleph_core.remote.mcp_asgi import run_remote_mcp_server
+
+    host = "0.0.0.0"
+    port = int(os.environ.get("PORT", "8080"))
+    args = sys.argv[2:]
+    for idx, tok in enumerate(args):
+        if tok == "--host" and idx + 1 < len(args):
+            host = str(args[idx + 1])
+        elif tok == "--port" and idx + 1 < len(args):
+            port = int(args[idx + 1])
+    return run_remote_mcp_server(host=host, port=port)
+
+
 def __getattr__(name: str):
     if name.startswith("cmd_"):
         from aleph_core.research_archive import cli_archive as _ca
@@ -1154,6 +1169,8 @@ if __name__ == "__main__":
         sys.exit(cmd_extract_dna())
     elif cmd == "visual-evolve":
         sys.exit(cmd_visual_evolve())
+    elif cmd == "mcp-prod-serve":
+        sys.exit(cmd_mcp_prod_serve())
     else:
         from aleph_core.research_archive.cli_archive import dispatch_archived_cli_command
         rc = dispatch_archived_cli_command(cmd, sys.argv)
