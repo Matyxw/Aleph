@@ -6,6 +6,8 @@ import hashlib
 import json
 import math
 import os
+import secrets
+import shutil
 import sqlite3
 import struct
 import uuid
@@ -301,6 +303,77 @@ def recall_elite_genes(design_mode: str, limit: int = 2, repo_root: Optional[str
         conn.close()
 
 
+def compute_filmstrip_motion_metrics(frame_paths: List[str]) -> Dict[str, Any]:
+    """Mide delta medio entre frames temporales para detectar scroll o canvas congelados."""
+    if frame_paths is None or len(frame_paths) < 2:
+        return {"frame_delta_mean": 0.0, "motion_continuity_score": 0.0, "frames_analyzed": 0}
+    grids: List[List[float]] = [[(0.299 * r + 0.587 * g + 0.114 * b) / 255.0 for r, g, b in _decode_png_grid(str(p), 48, 30)[2]] for p in frame_paths if os.path.isfile(str(p))]
+    if len(grids) < 2:
+        return {"frame_delta_mean": 0.0, "motion_continuity_score": 0.0, "frames_analyzed": len(grids)}
+    deltas = [sum(abs(grids[i][j] - grids[i - 1][j]) for j in range(min(len(grids[i - 1]), len(grids[i])))) / max(1, min(len(grids[i - 1]), len(grids[i]))) for i in range(1, len(grids))]
+    mean_d = round(sum(deltas) / max(1, len(deltas)), 4)
+    continuity = round(min(100.0, (sum(1 for d in deltas if d > 0.008) / max(1, len(deltas))) * 65.0 + min(1.0, mean_d / 0.12) * 35.0), 2)
+    return {"frame_delta_mean": mean_d, "motion_continuity_score": continuity, "frames_analyzed": len(grids)}
+
+def prepare_blind_pair(cand_a_imgs: List[str], cand_b_imgs: List[str], out_dir: str) -> Dict[str, Any]:
+    """Anonimiza pares A/B como cand_alpha y cand_beta para evaluación AB/BA ciega."""
+    if cand_a_imgs is None or cand_b_imgs is None:
+        raise ValueError("Candidate image lists cannot be None")
+    out_abs = os.path.abspath(str(out_dir))
+    os.makedirs(out_abs, exist_ok=True)
+    swap = secrets.randbelow(2) == 1
+    alpha_src, beta_src = (cand_b_imgs, cand_a_imgs) if swap else (cand_a_imgs, cand_b_imgs)
+    def _cp(srcs: List[str], prefix: str) -> List[str]:
+        copied_list: List[str] = []
+        for idx, s in enumerate(srcs, 1):
+            if os.path.isfile(str(s)):
+                dst = os.path.join(out_abs, f"{prefix}_{idx:02d}{os.path.splitext(str(s))[1] or '.png'}")
+                shutil.copy2(str(s), dst)
+                copied_list.append(dst)
+        return copied_list
+    return {"out_dir": out_abs, "alpha_origin": "B" if swap else "A", "beta_origin": "A" if swap else "B", "alpha_files": _cp(alpha_src, "cand_alpha"), "beta_files": _cp(beta_src, "cand_beta")}
+
+def distill_visual_artifact(niche: str, artifact_id: str, source_files: List[str], elo_rating: float, w3c_tokens: Optional[Dict[str, Any]] = None, arsenal_root: Optional[str] = None) -> Dict[str, Any]:
+    """Destila módulos campeones parametrizables al Arsenal Visual Soberano (~/.aleph/visual_arsenal)."""
+    if source_files is None:
+        raise ValueError("source_files cannot be None")
+    root = os.path.abspath(arsenal_root or os.path.join(os.path.expanduser("~"), ".aleph", "visual_arsenal"))
+    safe_niche = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in str(niche or "general"))
+    safe_art = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in str(artifact_id or "artifact"))
+    dest_dir = os.path.join(root, safe_niche, safe_art)
+    os.makedirs(dest_dir, exist_ok=True)
+    copied: List[Dict[str, Any]] = []
+    for src in source_files:
+        src_abs = os.path.abspath(str(src))
+        if not os.path.isfile(src_abs):
+            raise FileNotFoundError(f"Arsenal source missing: {src}")
+        dst = os.path.join(dest_dir, os.path.basename(src_abs))
+        shutil.copy2(src_abs, dst)
+        raw = Path(dst).read_bytes()
+        copied.append({"filename": os.path.basename(dst), "path": dst, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()})
+    manifest = {"niche": str(niche), "artifact_id": safe_art, "elo_rating": float(elo_rating), "w3c_tokens": w3c_tokens or {}, "files": copied, "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat()}
+    m_path = os.path.join(dest_dir, "manifest.json")
+    Path(m_path).write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {**manifest, "manifest_path": m_path}
+
+def recall_arsenal_modules(design_mode: str, limit: int = 3, arsenal_root: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Recupera los módulos destilados de mayor Elo filtrados por modo/nicho visual."""
+    root = os.path.abspath(arsenal_root or os.path.join(os.path.expanduser("~"), ".aleph", "visual_arsenal"))
+    if not os.path.isdir(root):
+        return []
+    key, items = str(design_mode or "").strip().lower(), []
+    for root_dir, _dirs, files in os.walk(root):
+        if "manifest.json" in files:
+            try:
+                m = json.loads(Path(os.path.join(root_dir, "manifest.json")).read_text(encoding="utf-8"))
+                niche_val = str(m.get("niche") or "").lower()
+                if not key or key in niche_val or niche_val in key:
+                    items.append(m)
+            except Exception as exc:
+                _ = exc
+    items.sort(key=lambda x: -float(x.get("elo_rating", 0.0)))
+    return items[: max(1, int(limit))]
+
 def cli_visual_evolve(argv: List[str]) -> int:
     sub = str(argv[0]) if argv else "status"
     eng = VisualEvolutionEngine()
@@ -310,7 +383,10 @@ def cli_visual_evolve(argv: List[str]) -> int:
     if sub == "recall":
         print(json.dumps(recall_elite_genes(str(argv[1]) if len(argv) > 1 else "AVANT_GARDE_SOTY"), indent=2, ensure_ascii=False))
         return 0
+    if sub == "arsenal":
+        print(json.dumps(recall_arsenal_modules(str(argv[1]) if len(argv) > 1 else "AVANT_GARDE_SOTY"), indent=2, ensure_ascii=False))
+        return 0
     if sub == "rollback" and len(argv) > 1:
         print(json.dumps(eng.rollback_genome_snapshot(str(argv[1])), indent=2, ensure_ascii=False))
         return 0
-    raise SystemExit("Usage: aleph_cli.py visual-evolve <status|recall|rollback> [arg]")
+    raise SystemExit("Usage: aleph_cli.py visual-evolve <status|recall|arsenal|rollback> [arg]")

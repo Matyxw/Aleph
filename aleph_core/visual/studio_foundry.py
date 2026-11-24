@@ -82,11 +82,50 @@ def detect_media_backends() -> Dict[str, Any]:
         "blender_local": bl_bin is not None, "blender_path": bl_bin,
         "ffmpeg_local": ff_bin is not None, "ffmpeg_path": ff_bin,
         "node_portable": os.path.isfile(os.path.join(_TOOLS_DIR, "node", "node.exe")),
+        "rtx_optix_ready": bl_bin is not None and shutil.which("nvidia-smi") is not None,
         "polyhaven_hdri": True, "shadcn_react_bits_mcp": has_shadcn,
         "gemini_imagen_veo": bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")),
         "fal_ai_3d_video": bool(os.environ.get("FAL_KEY")),
         "tripo_3d": bool(os.environ.get("TRIPO_API_KEY")), "meshy_3d": bool(os.environ.get("MESHY_API_KEY")),
     }
+
+
+def enable_rtx_cycles(scene_var: str = "scene") -> str:
+    """Devuelve snippet bpy para activar Cycles RTX OptiX/CUDA en GPU NVIDIA con fallback CPU."""
+    s = (scene_var or "scene").strip() or "scene"
+    return (
+        f"import bpy\n{s}.render.engine = 'CYCLES'\nprefs = bpy.context.preferences.addons['cycles'].preferences\n"
+        "for backend in ('OPTIX', 'CUDA'):\n    try:\n        prefs.compute_device_type = backend\n        prefs.get_devices()\n"
+        "        gpus = [d for d in prefs.devices if d.type != 'CPU']\n        if gpus:\n            for d in prefs.devices: d.use = True\n"
+        f"            {s}.cycles.device = 'GPU'\n            break\n    except Exception as exc:\n        _ = exc\n"
+    )
+
+
+def stitch_contact_sheet(image_paths: List[str], output_path: str, cols: int = 3, tile_width: int = 640) -> Dict[str, Any]:
+    """Ensambla hoja de contacto (turntable o motion filmstrip) vía ffmpeg tile."""
+    ff_bin = find_ffmpeg_binary()
+    if ff_bin is None:
+        raise FileNotFoundError("ffmpeg binary not found in portable tools or PATH")
+    if image_paths is None:
+        raise ValueError("image_paths must not be None")
+    valid = [os.path.abspath(str(p)) for p in image_paths if os.path.isfile(str(p))]
+    if not valid:
+        raise FileNotFoundError("No valid input images for stitch_contact_sheet")
+    c, r, w = max(1, int(cols)), max(1, (len(valid) + max(1, int(cols)) - 1) // max(1, int(cols))), max(64, int(tile_width))
+    out_abs = os.path.abspath(str(output_path))
+    os.makedirs(os.path.dirname(out_abs), exist_ok=True)
+    tmp_dir = tempfile.mkdtemp(prefix="aleph_sheet_")
+    try:
+        for idx, src_p in enumerate(valid, 1):
+            shutil.copy2(src_p, os.path.join(tmp_dir, f"t_{idx:04d}.png"))
+        cmd = [ff_bin, "-y", "-i", os.path.join(tmp_dir, "t_%04d.png"), "-vf", f"scale={w}:-2:flags=lanczos,tile={c}x{r}", "-frames:v", "1", out_abs]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+        if proc.returncode != 0 or not os.path.isfile(out_abs):
+            raise RuntimeError(f"ffmpeg tile failed ({proc.returncode}): {proc.stderr[-300:]}")
+        raw = Path(out_abs).read_bytes()
+        return {"status": "CONTACT_SHEET_OK", "output_path": out_abs, "tiles": len(valid), "cols": c, "rows": r, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def _resolve_hdr_url(files_payload: Dict[str, Any], resolution: str) -> str:

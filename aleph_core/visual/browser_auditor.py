@@ -347,7 +347,8 @@ class VisualBrowserAuditor:
 
     def _audit_url(self, audit_id: str, label: str, url: str, shot_dir: str, timeout_ms: int, capture_scroll_storyboard: bool = True) -> VisualAuditReport:
         from playwright.sync_api import sync_playwright
-        from aleph_core.visual.visual_evolve import analyze_png_perceptual_and_clearance
+        from aleph_core.visual.studio_foundry import stitch_contact_sheet
+        from aleph_core.visual.visual_evolve import analyze_png_perceptual_and_clearance, compute_filmstrip_motion_metrics
 
         console_errors: List[str] = []
         page_errors: List[str] = []
@@ -431,6 +432,22 @@ class VisualBrowserAuditor:
                                     s_path = os.path.abspath(os.path.join(shot_dir, f"{key}.png"))
                                     page.screenshot(path=s_path, full_page=False)
                                     screenshots[key] = s_path
+                                tmp_frames: List[str] = []
+                                try:
+                                    for fi, fpct in enumerate((0.0, 0.18, 0.36, 0.54, 0.72, 0.90), 1):
+                                        page.evaluate("y => window.scrollTo(0, y)", int(max_scroll * fpct))
+                                        page.wait_for_timeout(160)
+                                        tp = os.path.abspath(os.path.join(shot_dir, f"_tmp_m_{fi}.png"))
+                                        page.screenshot(path=tp, full_page=False)
+                                        tmp_frames.append(tp)
+                                    filmstrip_path = os.path.abspath(os.path.join(shot_dir, "motion_filmstrip.png"))
+                                    stitch_contact_sheet(tmp_frames, filmstrip_path, cols=3, tile_width=480)
+                                    screenshots["motion_filmstrip"] = filmstrip_path
+                                    motion_telemetry.update(compute_filmstrip_motion_metrics(tmp_frames))
+                                finally:
+                                    for tp in tmp_frames:
+                                        if os.path.isfile(tp):
+                                            os.remove(tp)
                                 page.evaluate("window.scrollTo(0, 0)")
                     elif vp_name == "ultrawide_2560":
                         uw_ml = page.evaluate(_MOTION_LAYOUT_JS, False)

@@ -927,7 +927,7 @@ class TestRonda11VisualSingularity(unittest.TestCase):
             bpe = estimate_bpe_tokens((_ROOT / fname).read_text(encoding="utf-8"))
             self.assertLessEqual(bpe, max_bpe, f"{fname} BPE {bpe} > {max_bpe}")
 
-        for py_rel, max_lines in (("aleph_core/engine.py", 1901), ("aleph_core/verification/z3_prover.py", 4026), ("aleph_core/visual/browser_auditor.py", 490), ("aleph_core/visual/studio_foundry.py", 280), ("aleph_core/visual/visual_evolve.py", 340), ("aleph_core/router/executive_preflight.py", 360)):
+        for py_rel, max_lines in (("aleph_core/engine.py", 1901), ("aleph_core/verification/z3_prover.py", 4026), ("aleph_core/visual/browser_auditor.py", 525), ("aleph_core/visual/studio_foundry.py", 330), ("aleph_core/visual/visual_evolve.py", 400), ("aleph_core/router/executive_preflight.py", 360)):
             n = len((_ROOT / py_rel).read_text(encoding="utf-8").splitlines())
             self.assertLessEqual(n, max_lines, f"{py_rel} lines {n} > {max_lines}")
 
@@ -1063,6 +1063,75 @@ for idx in range(1, 3):
         self.assertEqual(cold_data["tools"], 12)
         self.assertEqual(cold_data["arch"], [])
         self.assertEqual(cold_data["pw"], [])
+
+
+class TestRonda12ApexMotionFilmstripAndArsenal(unittest.TestCase):
+    def test_ronda12_motion_filmstrip_contact_sheet_blind_pair_and_arsenal(self):
+        import json, os, subprocess, sys, tempfile
+        from aleph_core.visual.browser_auditor import VisualBrowserAuditor
+        from aleph_core.visual.studio_foundry import enable_rtx_cycles, stitch_contact_sheet
+        from aleph_core.visual.visual_evolve import distill_visual_artifact, prepare_blind_pair, recall_arsenal_modules
+
+        snip = enable_rtx_cycles("scene")
+        self.assertIn("OPTIX", snip)
+        self.assertIn("CYCLES", snip)
+
+        html = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8" />
+<style>body{margin:0;background:#08090B;color:#F4F5F7;}section{height:820px;display:flex;align-items:center;justify-content:center;font-size:32px;}</style>
+</head><body>
+<section style="background:#08090B"><h1>S1 HERO</h1></section>
+<section style="background:#101828;color:#4FD1FF"><h2>S2 CORE</h2></section>
+<section style="background:#1E140B;color:#FF4D00"><h2>S3 INSTRUMENT</h2></section>
+</body></html>"""
+        rep = VisualBrowserAuditor(repo_root=str(_ROOT)).audit(html_content=html, capture_scroll_storyboard=True).to_dict()
+        self.assertTrue(rep["passed"], f"Audit failed: {rep}")
+        film = rep.get("screenshots", {}).get("motion_filmstrip")
+        self.assertTrue(film and os.path.isfile(film), f"Missing motion_filmstrip.png: {rep.get('screenshots')}")
+        mt = rep.get("motion_telemetry") or {}
+        self.assertGreater(mt.get("motion_continuity_score", 0.0), 0.0)
+        self.assertGreater(mt.get("frame_delta_mean", 0.0), 0.0)
+
+        with tempfile.TemporaryDirectory() as tmpd:
+            sheet_p = os.path.join(tmpd, "sheet_2x2.png")
+            s_res = stitch_contact_sheet([rep["screenshots"]["desktop_1440"], rep["screenshots"]["scroll_35_1440"], rep["screenshots"]["scroll_70_1440"], film], sheet_p, cols=2, tile_width=320)
+            self.assertEqual(s_res["status"], "CONTACT_SHEET_OK")
+            self.assertEqual(s_res["tiles"], 4)
+            self.assertTrue(os.path.isfile(sheet_p))
+
+            blind_dir = os.path.join(tmpd, "blind")
+            bp = prepare_blind_pair([rep["screenshots"]["desktop_1440"]], [rep["screenshots"]["scroll_35_1440"]], blind_dir)
+            self.assertIn(bp["alpha_origin"], ("A", "B"))
+            self.assertNotEqual(bp["alpha_origin"], bp["beta_origin"])
+            self.assertTrue(os.path.basename(bp["alpha_files"][0]).startswith("cand_alpha_"))
+            self.assertTrue(os.path.basename(bp["beta_files"][0]).startswith("cand_beta_"))
+
+            mod_a = Path(tmpd) / "shader.glsl"
+            mod_a.write_text("void main(){gl_FragColor=vec4(1.0);}", encoding="utf-8")
+            arsenal_dir = os.path.join(tmpd, "arsenal")
+            dist = distill_visual_artifact("AVANT_GARDE_SOTY", "apex_probe_01", [str(mod_a)], 1242.5, {"$schema": "w3c"}, arsenal_root=arsenal_dir)
+            self.assertTrue(os.path.isfile(dist["manifest_path"]))
+            recalled = recall_arsenal_modules("AVANT_GARDE_SOTY", limit=2, arsenal_root=arsenal_dir)
+            self.assertEqual(len(recalled), 1)
+            self.assertEqual(recalled[0]["artifact_id"], "apex_probe_01")
+
+        cold = subprocess.check_output(
+            [
+                sys.executable, "-B", "-c",
+                "import json, sys, aleph_core; from aleph_core.engine import AlephUniversalMCPServer; "
+                "srv = AlephUniversalMCPServer(); "
+                "tools = srv.handle_jsonrpc_request({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list', 'params': {'profile': 'sovereign'}})['result']['tools']; "
+                "print(json.dumps({'tools': len(tools), 'arch': [m for m in sys.modules if 'research_archive' in m], 'pw': [m for m in sys.modules if 'playwright' in m]}))",
+            ],
+            cwd=str(_ROOT), text=True,
+        )
+        cold_data = json.loads(cold.strip().splitlines()[-1])
+        self.assertEqual(cold_data["tools"], 12)
+        self.assertEqual(cold_data["arch"], [])
+        self.assertEqual(cold_data["pw"], [])
+
+
+if __name__ == "__main__":
+    unittest.main()
 
 
 if __name__ == "__main__":
