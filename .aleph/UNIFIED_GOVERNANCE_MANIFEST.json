@@ -19,7 +19,7 @@
   "cli_commands_count": 404,
   "formal_levels_count": 506,
   "mcp_tools_count": 752,
-  "total_unit_tests_count": 1457,
+  "total_unit_tests_count": 1458,
   "pass_rate_pct": 100.0,
   "false_positive_rate_pct": 0.0,
   "merged_nodes": {
@@ -58,7 +58,7 @@
   "catastrophic_forgetting_rate_pct": 0.0,
   "manifest_epoch": "V33.0-SOTA",
   "core_unit_tests_count": 1325,
-  "dot_aleph_unit_tests_count": 132,
+  "dot_aleph_unit_tests_count": 133,
   "skipped_tests_count": 9,
   "merkle_root_sha256": "0de647cd8475a29ff196acd473c4013e9db7dcca001e4561eba5ede498f71063",
   "canonical_manifest": true,

@@ -361,7 +361,7 @@ class VisualBrowserAuditor:
         motion_telemetry: Dict[str, Any] = {"cls": 0.0, "avg_fps": 0.0, "min_frame_fps": 0.0, "frames_sampled": 0, "long_frames_over_50ms": 0}
         layout_telemetry: Dict[str, Any] = {"clipped_text_count": 0, "clipped_selectors": [], "fixed_header_overlap_count": 0, "overlap_selectors": []}
         perceptual_cv: Dict[str, Any] = {}
-        clearance_rep: Dict[str, Any] = {"clearance_score": 100.0, "unshielded_blocks": 0, "colliding_selectors": [], "ultrawide_colliding_selectors": [], "max_underlying_saliency": 0.0}
+        clearance_rep: Dict[str, Any] = {"clearance_score": 100.0, "overlap_ratio": 0.0, "clearance_ok": True, "unshielded_blocks": 0, "colliding_selectors": [], "ultrawide_colliding_selectors": [], "max_underlying_saliency": 0.0}
         max_overflow, animations_total, has_reduced_rule = 0.0, 0, False
         load_timing: Dict[str, float] = {"domcontentloaded_ms": 0.0, "load_ms": 0.0}
 
@@ -398,7 +398,11 @@ class VisualBrowserAuditor:
                             load_timing["load_ms"] = float(data.get("loadEventMs") or wall_ms)
                         vp_metrics[vp_name] = data
                     shot_path = os.path.abspath(os.path.join(shot_dir, f"{vp_name}.png"))
-                    page.screenshot(path=shot_path, full_page=False)
+                    try:
+                        page.screenshot(path=shot_path, full_page=False)
+                    except Exception:
+                        page.wait_for_timeout(180)
+                        page.screenshot(path=shot_path, full_page=False)
                     screenshots[vp_name] = shot_path
                     if vp_name == "desktop_1440":
                         wf = page.evaluate(_WEBGL_FONTS_JS)
@@ -436,6 +440,8 @@ class VisualBrowserAuditor:
                             )
                             clearance_rep["ultrawide_colliding_selectors"] = list(uw_clr.get("colliding_selectors") or [])
                             clearance_rep["ultrawide_clearance_score"] = uw_clr.get("clearance_score", 100.0)
+                            clearance_rep["overlap_ratio"] = max(float(clearance_rep.get("overlap_ratio", 0.0)), float(uw_clr.get("overlap_ratio", 0.0)))
+                            clearance_rep["clearance_ok"] = bool(clearance_rep.get("clearance_ok", True)) and bool(uw_clr.get("clearance_ok", True))
 
                 reduced_ok = True
                 if animations_total > 0 and not has_reduced_rule:

@@ -116,7 +116,7 @@ def analyze_png_perceptual_and_clearance(
         cx, cy, focal_conc = 0.5, 0.5, 0.0
 
     colliding: List[str] = []
-    max_under_sal = 0.0
+    max_under_sal, max_overlap_ratio = 0.0, 0.0
     vw, vh = max(1, int(viewport_w)), max(1, int(viewport_h))
     for rect in unshielded_rects:
         x0 = max(0, min(w - 1, int(float(rect.get("left", 0)) / vw * w)))
@@ -127,6 +127,8 @@ def analyze_png_perceptual_and_clearance(
         if cells:
             noisy = sum(1 for v in cells if v > 0.28) / len(cells)
             max_under_sal = max(max_under_sal, round(sum(cells) / len(cells), 4))
+            if bool(rect.get("overlapsCanvas")):
+                max_overlap_ratio = max(max_overlap_ratio, round(noisy, 4))
             if noisy > 0.34 and bool(rect.get("overlapsCanvas")):
                 sel = str(rect.get("selector") or "text")
                 if sel not in colliding:
@@ -140,7 +142,7 @@ def analyze_png_perceptual_and_clearance(
     pqi = round(min(100.0, max(0.0, 26.0 * focal_conc + 22.0 * air_score + 20.0 * clutter_score + 14.0 * accent_score + 10.0 * scale_score + 8.0 * (clearance_score / 100.0))), 2)
 
     cv_metrics = {"edge_clutter_density": edge_clutter, "focal_saliency_concentration": focal_conc, "focal_centroid_xy": [cx, cy], "negative_space_ratio": neg_space, "saturated_accent_ratio": sat_ratio, "typography_scale_ratio": round(float(type_scale_ratio), 3), "perceptual_quality_index": pqi}
-    clearance = {"clearance_score": clearance_score, "unshielded_blocks": len(unshielded_rects), "colliding_selectors": colliding, "max_underlying_saliency": max_under_sal}
+    clearance = {"clearance_score": clearance_score, "overlap_ratio": max_overlap_ratio, "clearance_ok": len(colliding) == 0, "unshielded_blocks": len(unshielded_rects), "colliding_selectors": colliding, "max_underlying_saliency": max_under_sal}
     return cv_metrics, clearance
 
 
@@ -176,7 +178,7 @@ class VisualEvolutionEngine:
 
     @staticmethod
     def _gate_ok(cand: Dict[str, Any]) -> bool:
-        return float(cand.get("overflow", cand.get("horizontal_overflow_px", 0.0))) == 0.0 and int(cand.get("console_errors", 0)) == 0 and float(cand.get("cls", 0.0)) <= 0.25
+        return float(cand.get("overflow", cand.get("horizontal_overflow_px", 0.0))) == 0.0 and int(cand.get("console_errors", 0)) == 0 and float(cand.get("cls", 0.0)) <= 0.25 and bool(cand.get("clearance_ok", True)) is True
 
     @staticmethod
     def _state_hash(row: Optional[Dict[str, Any]]) -> str:

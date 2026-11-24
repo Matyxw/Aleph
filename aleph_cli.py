@@ -1012,13 +1012,25 @@ def cmd_visual_audit(target: str, capture_scroll_storyboard: bool = True) -> int
 
 def cmd_fetch_hdri() -> int:
     """Descarga o reutiliza desde caché un HDRI CC0 real de Poly Haven."""
-    from aleph_core.visual.studio_assets import cli_fetch_hdri
+    from aleph_core.visual.studio_foundry import cli_fetch_hdri
     return cli_fetch_hdri(sys.argv[2:])
+
+
+def cmd_encode_scroll() -> int:
+    """Codifica secuencia Apple Cinema Scroll .webp + manifest.json vía ffmpeg real."""
+    from aleph_core.visual.studio_foundry import cli_encode_scroll
+    return cli_encode_scroll(sys.argv[2:])
+
+
+def cmd_studio_status() -> int:
+    """Reporta backends reales de producción 3D/media locales y claves opcionales."""
+    from aleph_core.visual.studio_foundry import cli_studio_status
+    return cli_studio_status()
 
 
 def cmd_extract_dna() -> int:
     """Extrae ADN de diseño vivo en formato W3C DTCG 2025.10."""
-    from aleph_core.visual.studio_assets import cli_extract_dna
+    from aleph_core.visual.studio_foundry import cli_extract_dna
     return cli_extract_dna(sys.argv[2:])
 
 
@@ -1134,6 +1146,10 @@ if __name__ == "__main__":
         sys.exit(cmd_visual_audit(sys.argv[2], capture_scroll_storyboard=("--no-storyboard" not in sys.argv[2:])))
     elif cmd == "fetch-hdri":
         sys.exit(cmd_fetch_hdri())
+    elif cmd == "encode-scroll":
+        sys.exit(cmd_encode_scroll())
+    elif cmd == "studio-status":
+        sys.exit(cmd_studio_status())
     elif cmd == "extract-dna":
         sys.exit(cmd_extract_dna())
     elif cmd == "visual-evolve":

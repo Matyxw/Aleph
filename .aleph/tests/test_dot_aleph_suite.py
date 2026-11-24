@@ -891,7 +891,7 @@ class TestRonda11StudioCreativeUpgrade(unittest.TestCase):
     def test_ronda11_chromium_motion_telemetry_and_hdri_pipeline(self):
         import tempfile
         from aleph_core.visual.browser_auditor import VisualBrowserAuditor
-        from aleph_core.visual.studio_assets import fetch_polyhaven_studio_hdri
+        from aleph_core.visual.studio_foundry import fetch_polyhaven_studio_hdri
 
         html = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8" />
 <style>body{margin:0;background:#08090B;color:#F4F5F7;min-height:2400px;}header{position:fixed;top:0;left:0;right:0;height:48px;}main{padding-top:84px;}</style>
@@ -927,7 +927,7 @@ class TestRonda11VisualSingularity(unittest.TestCase):
             bpe = estimate_bpe_tokens((_ROOT / fname).read_text(encoding="utf-8"))
             self.assertLessEqual(bpe, max_bpe, f"{fname} BPE {bpe} > {max_bpe}")
 
-        for py_rel, max_lines in (("aleph_core/engine.py", 1901), ("aleph_core/verification/z3_prover.py", 4026), ("aleph_core/visual/browser_auditor.py", 490), ("aleph_core/visual/studio_assets.py", 180), ("aleph_core/visual/visual_evolve.py", 340), ("aleph_core/router/executive_preflight.py", 360)):
+        for py_rel, max_lines in (("aleph_core/engine.py", 1901), ("aleph_core/verification/z3_prover.py", 4026), ("aleph_core/visual/browser_auditor.py", 490), ("aleph_core/visual/studio_foundry.py", 280), ("aleph_core/visual/visual_evolve.py", 340), ("aleph_core/router/executive_preflight.py", 360)):
             n = len((_ROOT / py_rel).read_text(encoding="utf-8").splitlines())
             self.assertLessEqual(n, max_lines, f"{py_rel} lines {n} > {max_lines}")
 
@@ -953,7 +953,7 @@ class TestRonda11VisualSingularity(unittest.TestCase):
 
     def test_ronda11_hdri_and_live_w3c_design_dna_extractor(self):
         import tempfile
-        from aleph_core.visual.studio_assets import extract_live_design_dna, fetch_polyhaven_studio_hdri
+        from aleph_core.visual.studio_foundry import extract_live_design_dna, fetch_polyhaven_studio_hdri
 
         with tempfile.TemporaryDirectory() as tmpd:
             hdr = fetch_polyhaven_studio_hdri("studio_small_09", "1k", dest_dir=tmpd)
@@ -997,6 +997,72 @@ class TestRonda11VisualSingularity(unittest.TestCase):
             self.assertTrue(rb["verified_exact"])
             genes_after = recall_elite_genes("AVANT_GARDE_SOTY", limit=2, db_path=dbp)
             self.assertEqual(genes_after[0]["genome_id"], "g_a")
+
+
+class TestRonda11OmniStudioSingularity(unittest.TestCase):
+    def test_ronda11_omni_studio_backends_ffmpeg_webp_blender_glb_and_cold_boot(self):
+        import json, os, subprocess, sys, tempfile
+        from aleph_core.visual.studio_foundry import (
+            detect_media_backends,
+            encode_cinema_scroll_sequence,
+            run_blender_studio_job,
+        )
+
+        backends = detect_media_backends()
+        self.assertTrue(backends["ffmpeg_local"], f"ffmpeg missing: {backends}")
+        self.assertTrue(backends["blender_local"], f"blender missing: {backends}")
+        self.assertTrue(backends["shadcn_react_bits_mcp"], f"shadcn mcp missing: {backends}")
+
+        with tempfile.TemporaryDirectory() as tmpd:
+            frames_dir = os.path.join(tmpd, "raw")
+            out_webp = os.path.join(tmpd, "cinema")
+            os.makedirs(frames_dir, exist_ok=True)
+            bpy_script = os.path.join(tmpd, "smoke_glb_and_frames.py")
+            glb_out = os.path.join(tmpd, "smoke.glb")
+            bpy_script_txt = f"""import bpy, os
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.mesh.primitive_cube_add(size=1.2)
+bpy.ops.export_scene.gltf(filepath=r'{glb_out}', export_format='GLB')
+scene = bpy.context.scene
+engines = [i.identifier for i in bpy.types.RenderSettings.bl_rna.properties['engine'].enum_items]
+scene.render.engine = 'BLENDER_EEVEE_NEXT' if 'BLENDER_EEVEE_NEXT' in engines else 'BLENDER_EEVEE'
+scene.render.resolution_x = 160
+scene.render.resolution_y = 90
+scene.render.image_settings.file_format = 'PNG'
+bpy.ops.object.camera_add(location=(3, -3, 2), rotation=(1.1, 0.0, 0.78))
+scene.camera = bpy.context.active_object
+bpy.ops.object.light_add(type='SUN', location=(2, -2, 4))
+for idx in range(1, 3):
+    scene.render.filepath = os.path.join(r'{frames_dir}', f'frame_{{idx:04d}}.png')
+    bpy.ops.render.render(write_still=True)
+"""
+            Path(bpy_script).write_text(bpy_script_txt, encoding="utf-8")
+            bl_res = run_blender_studio_job(bpy_script, glb_out, timeout_sec=90)
+            self.assertEqual(bl_res["status"], "BLENDER_JOB_OK")
+            self.assertGreater(bl_res["bytes"], 512)
+
+            ff_res = encode_cinema_scroll_sequence(frames_dir, out_webp, fps=24, width=320, quality=80)
+            self.assertEqual(ff_res["frame_count"], 2)
+            self.assertTrue(os.path.isfile(ff_res["manifest_path"]))
+            self.assertGreater(ff_res["total_bytes"], 500)
+
+        cold = subprocess.check_output(
+            [
+                sys.executable,
+                "-B",
+                "-c",
+                "import json, sys, aleph_core; from aleph_core.engine import AlephUniversalMCPServer; "
+                "srv = AlephUniversalMCPServer(); "
+                "tools = srv.handle_jsonrpc_request({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list', 'params': {'profile': 'sovereign'}})['result']['tools']; "
+                "print(json.dumps({'tools': len(tools), 'arch': [m for m in sys.modules if 'research_archive' in m], 'pw': [m for m in sys.modules if 'playwright' in m]}))",
+            ],
+            cwd=str(_ROOT),
+            text=True,
+        )
+        cold_data = json.loads(cold.strip().splitlines()[-1])
+        self.assertEqual(cold_data["tools"], 12)
+        self.assertEqual(cold_data["arch"], [])
+        self.assertEqual(cold_data["pw"], [])
 
 
 if __name__ == "__main__":
